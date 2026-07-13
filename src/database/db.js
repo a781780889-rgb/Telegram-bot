@@ -55,12 +55,13 @@ const initializeSchema = () => {
     CREATE INDEX IF NOT EXISTS idx_accounts_user_id ON accounts(user_id);
     CREATE INDEX IF NOT EXISTS idx_accounts_status ON accounts(status);
     CREATE INDEX IF NOT EXISTS idx_accounts_phone ON accounts(phone);
+    CREATE INDEX IF NOT EXISTS idx_accounts_created_at ON accounts(created_at);
   `);
 
   logger.info('Database schema initialized');
 };
 
-// ─── Account Queries ─────────────────────────────────────────────────────────
+// ─── Account Queries ──────────────────────────────────────────────────────────
 
 const accountQueries = {
   insert: (userId, phone) => {
@@ -76,33 +77,21 @@ const accountQueries = {
     const fields = ['status = ?', 'updated_at = CURRENT_TIMESTAMP'];
     const values = [status];
 
-    if (extra.error_message !== undefined) {
-      fields.push('error_message = ?');
-      values.push(extra.error_message);
-    }
-    if (extra.first_name !== undefined) {
-      fields.push('first_name = ?');
-      values.push(extra.first_name);
-    }
-    if (extra.last_name !== undefined) {
-      fields.push('last_name = ?');
-      values.push(extra.last_name);
-    }
-    if (extra.username !== undefined) {
-      fields.push('username = ?');
-      values.push(extra.username);
-    }
-    if (extra.telegram_id !== undefined) {
-      fields.push('telegram_id = ?');
-      values.push(extra.telegram_id);
-    }
-    if (extra.session_file !== undefined) {
-      fields.push('session_file = ?');
-      values.push(extra.session_file);
-    }
-    if (extra.encrypted_session !== undefined) {
-      fields.push('encrypted_session = ?');
-      values.push(extra.encrypted_session);
+    const allowedExtras = [
+      'error_message',
+      'first_name',
+      'last_name',
+      'username',
+      'telegram_id',
+      'session_file',
+      'encrypted_session',
+    ];
+
+    for (const key of allowedExtras) {
+      if (extra[key] !== undefined) {
+        fields.push(`${key} = ?`);
+        values.push(extra[key]);
+      }
     }
 
     values.push(id);
@@ -138,13 +127,40 @@ const accountQueries = {
     return stmt.run(id, userId);
   },
 
-  countByUserId: (userId) => {
-    const row = getDb()
+  // ─── Statistics Queries ───────────────────────────────────────────────────
+
+  getStatsByUserId: (userId) => {
+    const database = getDb();
+
+    const total = database
+      .prepare('SELECT COUNT(*) as count FROM accounts WHERE user_id = ?')
+      .get(userId)?.count || 0;
+
+    const connected = database
       .prepare(
-        'SELECT COUNT(*) as count FROM accounts WHERE user_id = ? AND status = ?'
+        "SELECT COUNT(*) as count FROM accounts WHERE user_id = ? AND status = 'connected'"
       )
-      .get(userId, 'connected');
-    return row ? row.count : 0;
+      .get(userId)?.count || 0;
+
+    const disconnected = database
+      .prepare(
+        "SELECT COUNT(*) as count FROM accounts WHERE user_id = ? AND status IN ('disconnected', 'error', 'banned')"
+      )
+      .get(userId)?.count || 0;
+
+    const needsRelogin = database
+      .prepare(
+        "SELECT COUNT(*) as count FROM accounts WHERE user_id = ? AND status IN ('needs_password', 'otp_sent', 'error', 'disconnected')"
+      )
+      .get(userId)?.count || 0;
+
+    const addedToday = database
+      .prepare(
+        "SELECT COUNT(*) as count FROM accounts WHERE user_id = ? AND DATE(created_at) = DATE('now')"
+      )
+      .get(userId)?.count || 0;
+
+    return { total, connected, disconnected, needsRelogin, addedToday };
   },
 };
 
