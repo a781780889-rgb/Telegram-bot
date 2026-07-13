@@ -1,5 +1,7 @@
 const { maskPhone } = require('./encryption');
 
+// ─── Status Maps ──────────────────────────────────────────────────────────────
+
 const statusEmoji = {
   connected: '🟢',
   connecting: '🔄',
@@ -22,73 +24,75 @@ const statusText = {
   disconnected: 'غير متصل',
 };
 
-const welcomeMessage = (firstName) => `
-مرحبًا ${firstName || ''} 👋
+// ─── Menu Messages ────────────────────────────────────────────────────────────
 
-أنا بوت إدارة حسابات تيليجرام.
-يمكنني مساعدتك في إضافة وإدارة حسابات تيليجرام متعددة.
+const welcomeMessage = (firstName) =>
+  `مرحبًا ${firstName || ''} 👋\n\nأنا بوت إدارة حسابات تيليجرام.\nيمكنني مساعدتك في إضافة وإدارة حسابات تيليجرام متعددة.\n\nاختر أحد الخيارات أدناه:`;
 
-اختر أحد الخيارات أدناه:
-`;
+const helpMessage =
+  `📖 *دليل الاستخدام*\n\n` +
+  `*➕ إضافة حساب:*\n` +
+  `1. اضغط على ➕ إضافة حساب\n` +
+  `2. أدخل رقم هاتفك بالصيغة الدولية\n` +
+  `   مثال: \`+967771234567\`\n` +
+  `3. أدخل رمز التحقق المُرسَل لتطبيق تيليجرام\n` +
+  `4. إذا كان لديك تحقق بخطوتين، أدخل كلمة المرور\n\n` +
+  `*📋 عرض الحسابات:*\n` +
+  `• اضغط على أي حساب لعرض تفاصيله وإدارته\n\n` +
+  `*🔄 تحديث الحالات:*\n` +
+  `• يتحقق من اتصال جميع حساباتك مباشرة\n\n` +
+  `*📊 الإحصائيات:*\n` +
+  `• إحصائيات شاملة عن جميع حساباتك\n\n` +
+  `*ملاحظات:*\n` +
+  `• يجب أن يكون رقم الهاتف مُسجَّلًا في تيليجرام\n` +
+  `• رمز التحقق صالح لمدة 5 دقائق فقط\n` +
+  `• لن يتم تخزين كلمة مرورك\n` +
+  `• جلساتك محمية بتشفير قوي`;
 
-const helpMessage = `
-📖 *دليل الاستخدام*
+// ─── Add Account Flow Messages ────────────────────────────────────────────────
 
-*إضافة حساب:*
-1. اضغط على ➕ إضافة حساب
-2. أدخل رقم هاتفك بالصيغة الدولية
-   مثال: \`+967771234567\`
-3. أدخل رمز التحقق المُرسَل لتطبيق تيليجرام
-4. إذا كان لديك تحقق بخطوتين، أدخل كلمة المرور
+const phoneRequestMessage =
+  `📱 *إضافة حساب تيليجرام*\n\n` +
+  `أدخل رقم هاتفك بالصيغة الدولية:\n\n` +
+  `مثال: \`+967771234567\`\n\n` +
+  `⚠️ تأكد من وجود تطبيق تيليجرام على الهاتف لاستقبال رمز التحقق.`;
 
-*ملاحظات:*
-• يجب أن يكون رقم الهاتف مُسجَّلًا في تيليجرام
-• رمز التحقق صالح لمدة 5 دقائق فقط
-• لن يتم تخزين كلمة مرورك
-• جلساتك محمية بتشفير قوي
-`;
+const otpRequestMessage = (phone) =>
+  `✉️ *تم إرسال رمز التحقق*\n\n` +
+  `تم إرسال رمز التحقق إلى تطبيق تيليجرام على الرقم:\n` +
+  `\`${maskPhone(phone)}\`\n\n` +
+  `الرجاء إدخال الرمز المكون من 5 أرقام:\n\n` +
+  `⏱ الرمز صالح لمدة 5 دقائق.`;
 
-const phoneRequestMessage = `
-📱 *إضافة حساب تيليجرام*
+const passwordRequestMessage =
+  `🔐 *التحقق بخطوتين مُفعَّل*\n\n` +
+  `هذا الحساب يحتاج إلى كلمة مرور التحقق بخطوتين.\n\n` +
+  `أدخل كلمة المرور:\n\n` +
+  `🔒 سيتم حذف رسالتك فور الإرسال حمايةً لخصوصيتك.`;
 
-أدخل رقم هاتفك بالصيغة الدولية:
+const successMessage = (account) =>
+  `✅ *تم تسجيل الدخول بنجاح!*\n\n` +
+  `👤 *الاسم:* ${[account.first_name, account.last_name].filter(Boolean).join(' ') || 'غير محدد'}\n` +
+  `🔹 *اسم المستخدم:* ${account.username ? `@${account.username}` : 'لا يوجد'}\n` +
+  `📱 *الهاتف:* \`${maskPhone(account.phone)}\`\n` +
+  `🟢 *الحالة:* متصل\n\n` +
+  `تمت إضافة الحساب إلى قائمتك بنجاح.`;
 
-مثال: \`+967771234567\`
+// ─── Account List Messages ────────────────────────────────────────────────────
 
-⚠️ تأكد من وجود تطبيق تيليجرام على الهاتف لاستقبال رمز التحقق.
-`;
+const noAccountsMessage =
+  `📋 *قائمة الحسابات*\n\n` +
+  `لا توجد حسابات مضافة بعد.\n` +
+  `اضغط على ➕ لإضافة حساب جديد.`;
 
-const otpRequestMessage = (phone) => `
-✉️ *تم إرسال رمز التحقق*
-
-تم إرسال رمز التحقق إلى تطبيق تيليجرام على الرقم:
-\`${maskPhone(phone)}\`
-
-الرجاء إدخال الرمز المكون من 5 أرقام:
-`;
-
-const passwordRequestMessage = `
-🔐 *التحقق بخطوتين مُفعَّل*
-
-هذا الحساب يحتاج إلى كلمة مرور التحقق بخطوتين.
-
-أدخل كلمة المرور:
-`;
-
-const successMessage = (account) => `
-✅ *تم تسجيل الدخول بنجاح!*
-
-👤 *الاسم:* ${[account.first_name, account.last_name].filter(Boolean).join(' ') || 'غير محدد'}
-🔹 *اسم المستخدم:* ${account.username ? `@${account.username}` : 'لا يوجد'}
-📱 *الهاتف:* \`${maskPhone(account.phone)}\`
-🟢 *الحالة:* متصل
-
-تمت إضافة الحساب إلى قائمتك بنجاح.
-`;
-
+/**
+ * Single account card for the list view
+ * @param {object} account
+ * @param {number} index
+ */
 const accountCardMessage = (account, index) => {
   const emoji = statusEmoji[account.status] || '⚪️';
-  const text = statusText[account.status] || account.status;
+  const statusLabel = statusText[account.status] || account.status;
   const name =
     [account.first_name, account.last_name].filter(Boolean).join(' ') ||
     'غير محدد';
@@ -98,41 +102,181 @@ const accountCardMessage = (account, index) => {
     `*${index}. ${name}*\n` +
     `   📱 \`${maskPhone(account.phone)}\`\n` +
     `   👤 ${username}\n` +
-    `   ${emoji} ${text}`
+    `   ${emoji} ${statusLabel}`
   );
 };
 
-const noAccountsMessage = `
-📋 *قائمة الحسابات*
+/**
+ * Full account detail message
+ * @param {object} account
+ */
+const accountDetailMessage = (account) => {
+  const emoji = statusEmoji[account.status] || '⚪️';
+  const statusLabel = statusText[account.status] || account.status;
+  const name =
+    [account.first_name, account.last_name].filter(Boolean).join(' ') ||
+    'غير محدد';
+  const username = account.username ? `@${account.username}` : 'لا يوجد';
+  const addedDate = new Date(account.created_at).toLocaleDateString('ar-SA', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+  const updatedDate = new Date(account.updated_at).toLocaleDateString('ar-SA', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
 
-لا توجد حسابات مضافة بعد.
-اضغط على ➕ لإضافة حساب جديد.
-`;
+  let text =
+    `👤 *تفاصيل الحساب*\n` +
+    `${'─'.repeat(25)}\n` +
+    `*الاسم:* ${name}\n` +
+    `*اسم المستخدم:* ${username}\n` +
+    `*رقم الهاتف:* \`${maskPhone(account.phone)}\`\n` +
+    `*الحالة:* ${emoji} ${statusLabel}\n` +
+    `*تاريخ الإضافة:* ${addedDate}\n` +
+    `*آخر تحديث:* ${updatedDate}`;
 
-const errorOtpExpired = `
-⏱ *انتهت صلاحية رمز التحقق*
+  if (account.telegram_id) {
+    text += `\n*معرّف تيليجرام:* \`${account.telegram_id}\``;
+  }
 
-انتهت صلاحية الرمز. سيتم إرسال رمز جديد.
-`;
+  if (account.error_message && account.status === 'error') {
+    text += `\n\n⚠️ *سبب الخطأ:*\n${account.error_message.slice(0, 150)}`;
+  }
 
-const errorTooManyAttempts = `
-🚫 *محاولات كثيرة جدًا*
+  return text;
+};
 
-لقد تجاوزت الحد الأقصى لمحاولات إدخال الرمز.
-الرجاء البدء من جديد.
-`;
+// ─── Accounts Menu Message ────────────────────────────────────────────────────
+
+const accountsMenuMessage =
+  `📂 *إدارة حسابات تيليجرام*\n\n` +
+  `اختر الإجراء الذي تريد تنفيذه:`;
+
+// ─── Status Refresh Messages ──────────────────────────────────────────────────
+
+const refreshStartMessage = (count) =>
+  `🔄 *جارٍ تحديث حالة ${count} حساب...*\n\n` +
+  `⏳ قد يستغرق ذلك بعض الوقت، يرجى الانتظار.`;
+
+/**
+ * Build the full status refresh result message
+ * @param {Array<{account: object, isAlive: boolean, error?: string}>} results
+ */
+const refreshResultMessage = (results) => {
+  const connected = results.filter((r) => r.isAlive);
+  const failed = results.filter((r) => !r.isAlive);
+
+  let text =
+    `✅ *اكتمل تحديث الحالات*\n` +
+    `${'─'.repeat(25)}\n` +
+    `🟢 متصل: ${connected.length}\n` +
+    `🔴 غير متصل: ${failed.length}\n` +
+    `📊 الإجمالي: ${results.length}\n`;
+
+  if (connected.length > 0) {
+    text += `\n*الحسابات المتصلة:*\n`;
+    connected.forEach((r) => {
+      const name =
+        [r.account.first_name, r.account.last_name].filter(Boolean).join(' ') ||
+        maskPhone(r.account.phone);
+      text += `🟢 ${name}\n`;
+    });
+  }
+
+  if (failed.length > 0) {
+    text += `\n*الحسابات غير المتصلة:*\n`;
+    failed.forEach((r) => {
+      const name =
+        [r.account.first_name, r.account.last_name].filter(Boolean).join(' ') ||
+        maskPhone(r.account.phone);
+      text += `🔴 ${name}\n`;
+    });
+  }
+
+  return text;
+};
+
+// ─── Statistics Message ───────────────────────────────────────────────────────
+
+/**
+ * Build accounts statistics message
+ * @param {object} stats
+ */
+const statsMessage = (stats) => {
+  const { total, connected, disconnected, needsRelogin, addedToday } = stats;
+  const inactive = total - connected;
+
+  return (
+    `📊 *إحصائيات الحسابات*\n` +
+    `${'─'.repeat(25)}\n\n` +
+    `📁 *إجمالي الحسابات:* ${total}\n` +
+    `🟢 *الحسابات النشطة:* ${connected}\n` +
+    `🔴 *الحسابات غير النشطة:* ${inactive}\n` +
+    `🔄 *تحتاج إعادة تسجيل دخول:* ${needsRelogin}\n` +
+    `📅 *مضافة اليوم:* ${addedToday}\n\n` +
+    (total > 0
+      ? `📈 *نسبة الاتصال:* ${Math.round((connected / total) * 100)}%`
+      : `💡 لا توجد حسابات مضافة بعد.`)
+  );
+};
+
+// ─── Edit Account Message ─────────────────────────────────────────────────────
+
+/**
+ * Edit account page message
+ * @param {object} account
+ */
+const editAccountMessage = (account) => {
+  const name =
+    [account.first_name, account.last_name].filter(Boolean).join(' ') ||
+    'غير محدد';
+  return (
+    `✏️ *تعديل الحساب*\n\n` +
+    `*الحساب:* ${name}\n` +
+    `*الهاتف:* \`${maskPhone(account.phone)}\`\n\n` +
+    `اختر الإجراء المطلوب:`
+  );
+};
+
+// ─── Error Messages ───────────────────────────────────────────────────────────
+
+const errorOtpExpired =
+  `⏱ *انتهت صلاحية رمز التحقق*\n\n` +
+  `انتهت صلاحية الرمز. سيتم إرسال رمز جديد تلقائيًا.`;
+
+const errorTooManyAttempts =
+  `🚫 *محاولات كثيرة جدًا*\n\n` +
+  `لقد تجاوزت الحد الأقصى لمحاولات إدخال الرمز.\n` +
+  `الرجاء البدء من جديد.`;
 
 module.exports = {
+  // Status maps
+  statusEmoji,
+  statusText,
+  // Menu
   welcomeMessage,
   helpMessage,
+  accountsMenuMessage,
+  // Add account flow
   phoneRequestMessage,
   otpRequestMessage,
   passwordRequestMessage,
   successMessage,
+  // Account list/detail
   accountCardMessage,
+  accountDetailMessage,
   noAccountsMessage,
+  // Refresh
+  refreshStartMessage,
+  refreshResultMessage,
+  // Stats
+  statsMessage,
+  // Edit
+  editAccountMessage,
+  // Errors
   errorOtpExpired,
   errorTooManyAttempts,
-  statusEmoji,
-  statusText,
 };

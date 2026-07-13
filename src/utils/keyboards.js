@@ -1,69 +1,65 @@
 const { Markup } = require('telegraf');
 
+// ─── Main Menu ────────────────────────────────────────────────────────────────
+
 /**
  * Main menu keyboard
  */
 const mainMenuKeyboard = () =>
   Markup.inlineKeyboard([
-    [Markup.button.callback('➕ إضافة حساب تيليجرام', 'add_account')],
-    [Markup.button.callback('📋 قائمة الحسابات', 'list_accounts')],
+    [Markup.button.callback('➕ إضافة حساب', 'add_account')],
+    [Markup.button.callback('📋 عرض الحسابات', 'list_accounts')],
+    [Markup.button.callback('🔄 تحديث حالة الحسابات', 'refresh_all_status')],
+    [Markup.button.callback('📊 إحصائيات الحسابات', 'accounts_stats')],
     [Markup.button.callback('ℹ️ المساعدة', 'help')],
   ]);
+
+// ─── Account Management Menu ──────────────────────────────────────────────────
+
+/**
+ * Account management sub-menu keyboard
+ */
+const accountsMenuKeyboard = () =>
+  Markup.inlineKeyboard([
+    [Markup.button.callback('➕ إضافة حساب', 'add_account')],
+    [Markup.button.callback('✏️ تعديل حساب', 'edit_account_list')],
+    [Markup.button.callback('📋 عرض الحسابات', 'list_accounts')],
+    [Markup.button.callback('🗑 حذف حساب', 'delete_account_list')],
+    [Markup.button.callback('🔄 تحديث حالة الحسابات', 'refresh_all_status')],
+    [Markup.button.callback('📊 إحصائيات الحسابات', 'accounts_stats')],
+    [Markup.button.callback('⬅️ رجوع', 'main_menu')],
+  ]);
+
+// ─── Flow Keyboards ───────────────────────────────────────────────────────────
 
 /**
  * Cancel keyboard shown during multi-step flows
  */
 const cancelKeyboard = () =>
-  Markup.inlineKeyboard([[Markup.button.callback('❌ إلغاء', 'cancel_flow')]]);
-
-/**
- * Account actions keyboard
- * @param {number} accountId
- * @param {string} status
- */
-const accountActionsKeyboard = (accountId, status) => {
-  const buttons = [];
-
-  if (status !== 'connected') {
-    buttons.push(
-      Markup.button.callback('🔄 إعادة تسجيل الدخول', `relogin_${accountId}`)
-    );
-  }
-
-  buttons.push(
-    Markup.button.callback('📊 فحص الحالة', `check_status_${accountId}`)
-  );
-  buttons.push(
-    Markup.button.callback('🗑️ حذف الحساب', `delete_confirm_${accountId}`)
-  );
-
-  const rows = [];
-  if (buttons.length === 3) {
-    rows.push([buttons[0], buttons[1]]);
-    rows.push([buttons[2]]);
-  } else {
-    rows.push([buttons[0], buttons[1]]);
-  }
-
-  rows.push([Markup.button.callback('🔙 القائمة الرئيسية', 'main_menu')]);
-
-  return Markup.inlineKeyboard(rows);
-};
-
-/**
- * Delete confirmation keyboard
- * @param {number} accountId
- */
-const confirmDeleteKeyboard = (accountId) =>
   Markup.inlineKeyboard([
-    [
-      Markup.button.callback('✅ نعم، احذف', `delete_yes_${accountId}`),
-      Markup.button.callback('❌ لا، إلغاء', 'list_accounts'),
-    ],
+    [Markup.button.callback('❌ إلغاء', 'cancel_flow')],
   ]);
 
 /**
- * Back to menu keyboard
+ * Back to accounts menu keyboard
+ */
+const backToAccountsMenuKeyboard = () =>
+  Markup.inlineKeyboard([
+    [Markup.button.callback('🔙 إدارة الحسابات', 'accounts_menu')],
+    [Markup.button.callback('🏠 القائمة الرئيسية', 'main_menu')],
+  ]);
+
+/**
+ * Back to accounts list keyboard
+ */
+const backToListKeyboard = () =>
+  Markup.inlineKeyboard([
+    [Markup.button.callback('📋 عرض الحسابات', 'list_accounts')],
+    [Markup.button.callback('🏠 القائمة الرئيسية', 'main_menu')],
+  ]);
+
+/**
+ * Back to main menu keyboard
  */
 const backToMenuKeyboard = () =>
   Markup.inlineKeyboard([
@@ -79,11 +75,96 @@ const retryKeyboard = () =>
     [Markup.button.callback('🔙 القائمة الرئيسية', 'main_menu')],
   ]);
 
+// ─── Account Detail Keyboards ─────────────────────────────────────────────────
+
+/**
+ * Account actions keyboard shown on account detail page
+ * @param {number} accountId
+ * @param {string} status
+ */
+const accountActionsKeyboard = (accountId, status) => {
+  const rows = [];
+
+  // Row 1: primary action based on status
+  if (status === 'connected') {
+    rows.push([
+      Markup.button.callback('🔍 فحص الحالة', `check_status_${accountId}`),
+      Markup.button.callback('✏️ تعديل', `edit_account_${accountId}`),
+    ]);
+  } else {
+    rows.push([
+      Markup.button.callback('🔄 إعادة تسجيل الدخول', `relogin_${accountId}`),
+      Markup.button.callback('🔍 فحص الحالة', `check_status_${accountId}`),
+    ]);
+  }
+
+  // Row 2: destructive action
+  rows.push([
+    Markup.button.callback('🗑️ حذف الحساب', `delete_confirm_${accountId}`),
+  ]);
+
+  // Row 3: navigation
+  rows.push([
+    Markup.button.callback('🔙 القائمة', 'list_accounts'),
+  ]);
+
+  return Markup.inlineKeyboard(rows);
+};
+
+/**
+ * Delete confirmation keyboard
+ * @param {number} accountId
+ */
+const confirmDeleteKeyboard = (accountId) =>
+  Markup.inlineKeyboard([
+    [
+      Markup.button.callback('✅ نعم، احذف', `delete_yes_${accountId}`),
+      Markup.button.callback('❌ لا، إلغاء', `account_detail_${accountId}`),
+    ],
+  ]);
+
+/**
+ * Edit account keyboard — choose what to edit
+ * @param {number} accountId
+ */
+const editAccountKeyboard = (accountId) =>
+  Markup.inlineKeyboard([
+    [Markup.button.callback('🔄 إعادة تسجيل الدخول', `relogin_${accountId}`)],
+    [Markup.button.callback('🔍 تحديث الحالة', `check_status_${accountId}`)],
+    [Markup.button.callback('🔙 رجوع للحساب', `account_detail_${accountId}`)],
+  ]);
+
+/**
+ * After refresh all — view results keyboard
+ */
+const afterRefreshKeyboard = () =>
+  Markup.inlineKeyboard([
+    [Markup.button.callback('📋 عرض الحسابات', 'list_accounts')],
+    [Markup.button.callback('📊 الإحصائيات', 'accounts_stats')],
+    [Markup.button.callback('🏠 القائمة الرئيسية', 'main_menu')],
+  ]);
+
+/**
+ * Stats page keyboard
+ */
+const statsKeyboard = () =>
+  Markup.inlineKeyboard([
+    [Markup.button.callback('📋 عرض الحسابات', 'list_accounts')],
+    [Markup.button.callback('🔄 تحديث الكل', 'refresh_all_status')],
+    [Markup.button.callback('🏠 القائمة الرئيسية', 'main_menu')],
+  ]);
+
 module.exports = {
   mainMenuKeyboard,
+  accountsMenuKeyboard,
   cancelKeyboard,
-  accountActionsKeyboard,
-  confirmDeleteKeyboard,
+  backToAccountsMenuKeyboard,
+  backToListKeyboard,
   backToMenuKeyboard,
   retryKeyboard,
+  accountActionsKeyboard,
+  confirmDeleteKeyboard,
+  editAccountKeyboard,
+  afterRefreshKeyboard,
+  statsKeyboard,
 };
