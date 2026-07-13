@@ -4,7 +4,9 @@ const { Telegraf } = require('telegraf');
 const logger = require('./utils/logger');
 const errorHandler = require('./middlewares/errorHandler');
 const textRouter = require('./middlewares/textRouter');
+
 const { handleStart, handleMainMenu, handleHelp } = require('./handlers/menu');
+const { handleAccountsMenu } = require('./handlers/accountsMenu');
 const {
   handleAddAccountStart,
   handleCancelFlow,
@@ -12,10 +14,15 @@ const {
 const {
   handleListAccounts,
   handleAccountDetail,
+  handleEditAccountList,
+  handleEditAccount,
   handleCheckStatus,
+  handleRefreshAllStatus,
+  handleDeleteAccountList,
   handleDeleteConfirm,
   handleDeleteAccount,
   handleRelogin,
+  handleAccountsStats,
 } = require('./handlers/manageAccounts');
 
 // ─── Validate required environment variables ──────────────────────────────────
@@ -49,42 +56,61 @@ bot.command('menu', async (ctx) => {
   await ctx.reply('القائمة الرئيسية:', require('./utils/keyboards').mainMenuKeyboard());
 });
 
-// ─── Callback Query Handlers ──────────────────────────────────────────────────
+// ─── Navigation Callbacks ─────────────────────────────────────────────────────
 
 bot.action('main_menu', handleMainMenu);
 bot.action('help', handleHelp);
+bot.action('accounts_menu', handleAccountsMenu);
+
+// ─── Add Account Callbacks ────────────────────────────────────────────────────
+
 bot.action('add_account', handleAddAccountStart);
 bot.action('cancel_flow', handleCancelFlow);
-bot.action('list_accounts', handleListAccounts);
 
-// Dynamic callback patterns
+// ─── Account Management Callbacks ────────────────────────────────────────────
+
+bot.action('list_accounts', handleListAccounts);
+bot.action('edit_account_list', handleEditAccountList);
+bot.action('delete_account_list', handleDeleteAccountList);
+bot.action('refresh_all_status', handleRefreshAllStatus);
+bot.action('accounts_stats', handleAccountsStats);
+
+// ─── Dynamic Account Callbacks ────────────────────────────────────────────────
+
+// Account detail
 bot.action(/^account_detail_(\d+)$/, async (ctx) => {
   const accountId = parseInt(ctx.match[1], 10);
   await handleAccountDetail(ctx, accountId);
-  await ctx.answerCbQuery();
 });
 
+// Edit account
+bot.action(/^edit_account_(\d+)$/, async (ctx) => {
+  const accountId = parseInt(ctx.match[1], 10);
+  await handleEditAccount(ctx, accountId);
+});
+
+// Check single account status
 bot.action(/^check_status_(\d+)$/, async (ctx) => {
   const accountId = parseInt(ctx.match[1], 10);
   await handleCheckStatus(ctx, accountId);
 });
 
+// Delete confirmation
 bot.action(/^delete_confirm_(\d+)$/, async (ctx) => {
   const accountId = parseInt(ctx.match[1], 10);
   await handleDeleteConfirm(ctx, accountId);
-  await ctx.answerCbQuery();
 });
 
+// Delete confirmed
 bot.action(/^delete_yes_(\d+)$/, async (ctx) => {
   const accountId = parseInt(ctx.match[1], 10);
   await handleDeleteAccount(ctx, accountId);
-  await ctx.answerCbQuery('✅ تم الحذف');
 });
 
+// Re-login
 bot.action(/^relogin_(\d+)$/, async (ctx) => {
   const accountId = parseInt(ctx.match[1], 10);
   await handleRelogin(ctx, accountId);
-  await ctx.answerCbQuery();
 });
 
 // ─── Text Message Router ──────────────────────────────────────────────────────
@@ -97,7 +123,6 @@ const shutdown = async (signal) => {
   logger.info(`Received ${signal}. Shutting down gracefully...`);
 
   try {
-    // Disconnect all active clients
     const { activeClients, disconnectClient } = require('./services/telegramClient');
     const clientIds = [...activeClients.keys()];
     await Promise.allSettled(clientIds.map((id) => disconnectClient(id)));
