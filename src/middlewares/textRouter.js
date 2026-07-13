@@ -1,10 +1,12 @@
 const sessionState = require('../services/sessionState');
 const { STATES } = require('../services/sessionState');
+const linksWizardState = require('../services/linksWizardState');
 const {
   handlePhoneInput,
   handleOtpInput,
   handlePasswordInput,
 } = require('../handlers/addAccount');
+const { handleLinksTextInput } = require('../handlers/linksMenu');
 const { mainMenuKeyboard } = require('../utils/keyboards');
 const logger = require('../utils/logger');
 
@@ -31,6 +33,12 @@ const textRouter = async (ctx, next) => {
       '⏱ انتهت مهلة الجلسة. ابدأ من جديد.',
       mainMenuKeyboard()
     );
+    return;
+  }
+
+  // ─── Links wizard takes priority when user is in a text-input step ──────────
+  if (linksWizardState.isAwaitingTextInput(userId)) {
+    await handleLinksTextInput(ctx);
     return;
   }
 
