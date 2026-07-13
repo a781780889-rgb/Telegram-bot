@@ -22,45 +22,114 @@ const getDb = () => {
   return db;
 };
 
-const initializeSchema = () => {
-  const database = db;
+// ─── Safe Migration System ─────────────────────────────────────────────────────
+//
+// All migrations are ADDITIVE ONLY — no DROP TABLE, no DROP COLUMN, no DELETE.
+// Each migration runs exactly once and is recorded in schema_migrations.
+// This guarantees zero data loss across deployments, updates, or restarts.
 
+/**
+ * Check if a column exists in a table using PRAGMA.
+ * @param {Database} database
+ * @param {string} table
+ * @param {string} column
+ * @returns {boolean}
+ */
+const columnExists = (database, table, column) => {
+  const cols = database.prepare(`PRAGMA table_info(${table})`).all();
+  return cols.some((c) => c.name === column);
+};
+
+/**
+ * Apply all pending schema migrations in order.
+ * @param {Database} database
+ */
+const runMigrations = (database) => {
+  // Ensure migration tracking table exists before anything else
   database.exec(`
-    CREATE TABLE IF NOT EXISTS accounts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id TEXT NOT NULL,
-      phone TEXT NOT NULL,
-      first_name TEXT,
-      last_name TEXT,
-      username TEXT,
-      telegram_id TEXT,
-      status TEXT NOT NULL DEFAULT 'pending',
-      session_file TEXT,
-      encrypted_session TEXT,
-      error_message TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(user_id, phone)
-    );
-
-    CREATE TABLE IF NOT EXISTS bot_users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      telegram_user_id TEXT NOT NULL UNIQUE,
-      username TEXT,
-      first_name TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_accounts_user_id ON accounts(user_id);
-    CREATE INDEX IF NOT EXISTS idx_accounts_status ON accounts(status);
-    CREATE INDEX IF NOT EXISTS idx_accounts_phone ON accounts(phone);
-    CREATE INDEX IF NOT EXISTS idx_accounts_created_at ON accounts(created_at);
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version    INTEGER PRIMARY KEY,
+      name       TEXT    NOT NULL,
+      applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
   `);
 
-  logger.info('Database schema initialized');
+  const appliedVersions = new Set(
+    database
+      .prepare('SELECT version FROM schema_migrations ORDER BY version')
+      .all()
+      .map((r) => r.version)
+  );
 
-  // Initialize links schema (lazy import to avoid circular dep)
+  /**
+   * Run a migration if it hasn't been applied yet.
+   */
+  const apply = (version, name, fn) => {
+    if (appliedVersions.has(version)) return;
+
+    logger.info(`DB Migration v${version}: "${name}" — applying…`);
+    database.transaction(() => {
+      fn(database);
+      database
+        .prepare('INSERT INTO schema_migrations (version, name) VALUES (?, ?)')
+        .run(version, name);
+    })();
+    appliedVersions.add(version);
+    logger.info(`DB Migration v${version}: applied ✓`);
+  };
+
+  // ── v1: Core schema ──────────────────────────────────────────────────────────
+  // Uses CREATE TABLE IF NOT EXISTS so existing data is never touched.
+  apply(1, 'core_schema', (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS accounts (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id           TEXT    NOT NULL,
+        phone             TEXT    NOT NULL,
+        first_name        TEXT,
+        last_name         TEXT,
+        username          TEXT,
+        telegram_id       TEXT,
+        status            TEXT    NOT NULL DEFAULT 'pending',
+        session_file      TEXT,
+        encrypted_session TEXT,
+        error_message     TEXT,
+        created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, phone)
+      );
+
+      CREATE TABLE IF NOT EXISTS bot_users (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        telegram_user_id TEXT    NOT NULL UNIQUE,
+        username         TEXT,
+        first_name       TEXT,
+        created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_seen        DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_accounts_user_id   ON accounts(user_id);
+      CREATE INDEX IF NOT EXISTS idx_accounts_status    ON accounts(status);
+      CREATE INDEX IF NOT EXISTS idx_accounts_phone     ON accounts(phone);
+      CREATE INDEX IF NOT EXISTS idx_accounts_created_at ON accounts(created_at);
+    `);
+  });
+
+  // ── v2: Add last_restored_at column ─────────────────────────────────────────
+  apply(2, 'add_last_restored_at', (db) => {
+    if (!columnExists(db, 'accounts', 'last_restored_at')) {
+      db.exec('ALTER TABLE accounts ADD COLUMN last_restored_at DATETIME');
+    }
+  });
+};
+
+// ─── Schema initializer (called once on first getDb()) ────────────────────────
+
+const initializeSchema = () => {
+  runMigrations(db);
+  logger.info('Database schema initialised — all migrations applied.');
+
+  // Lazy-import linksDb to avoid circular dependency
   try {
     const { initLinksSchema } = require('./linksDb');
     initLinksSchema();
@@ -70,13 +139,31 @@ const initializeSchema = () => {
 // ─── Account Queries ──────────────────────────────────────────────────────────
 
 const accountQueries = {
+  /**
+   * Insert a new account row or reset the status of an existing one.
+   *
+   * IMPORTANT: Uses INSERT … ON CONFLICT DO UPDATE instead of
+   * INSERT OR REPLACE so that existing rows (and their encrypted_session /
+   * session_file) are NEVER deleted and re-created with a different id.
+   * Only `status`, `error_message`, and `updated_at` are reset when the
+   * same (user_id, phone) pair already exists.
+   *
+   * @param {string} userId
+   * @param {string} phone
+   * @returns {number} row id
+   */
   insert: (userId, phone) => {
     const stmt = getDb().prepare(`
-      INSERT OR REPLACE INTO accounts (user_id, phone, status, updated_at)
-      VALUES (?, ?, 'connecting', CURRENT_TIMESTAMP)
+      INSERT INTO accounts (user_id, phone, status, error_message, updated_at)
+      VALUES (?, ?, 'connecting', NULL, CURRENT_TIMESTAMP)
+      ON CONFLICT(user_id, phone) DO UPDATE SET
+        status        = 'connecting',
+        error_message = NULL,
+        updated_at    = CURRENT_TIMESTAMP
+      RETURNING id
     `);
-    const result = stmt.run(userId, phone);
-    return result.lastInsertRowid;
+    const row = stmt.get(userId, phone);
+    return row.id;
   },
 
   updateStatus: (id, status, extra = {}) => {
@@ -91,6 +178,7 @@ const accountQueries = {
       'telegram_id',
       'session_file',
       'encrypted_session',
+      'last_restored_at',
     ];
 
     for (const key of allowedExtras) {
@@ -127,13 +215,10 @@ const accountQueries = {
   },
 
   deleteById: (id, userId) => {
-    const stmt = getDb().prepare(
-      'DELETE FROM accounts WHERE id = ? AND user_id = ?'
-    );
-    return stmt.run(id, userId);
+    return getDb()
+      .prepare('DELETE FROM accounts WHERE id = ? AND user_id = ?')
+      .run(id, userId);
   },
-
-  // ─── Statistics Queries ───────────────────────────────────────────────────
 
   getStatsByUserId: (userId) => {
     const database = getDb();
@@ -178,12 +263,56 @@ const botUserQueries = {
       INSERT INTO bot_users (telegram_user_id, username, first_name, last_seen)
       VALUES (?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(telegram_user_id) DO UPDATE SET
-        username = excluded.username,
+        username   = excluded.username,
         first_name = excluded.first_name,
-        last_seen = CURRENT_TIMESTAMP
+        last_seen  = CURRENT_TIMESTAMP
     `);
     return stmt.run(String(telegramUserId), username || null, firstName || null);
   },
 };
 
-module.exports = { getDb, accountQueries, botUserQueries };
+// ─── Restore-specific Queries ─────────────────────────────────────────────────
+
+/**
+ * Return all accounts that have a saved encrypted_session (DB backup).
+ * These are candidates for automatic restoration on startup.
+ *
+ * Excludes accounts that are still in the middle of an OTP / password flow,
+ * since those have no valid session to restore.
+ *
+ * @returns {object[]}
+ */
+const getAllAccountsWithSession = () => {
+  return getDb()
+    .prepare(
+      `SELECT * FROM accounts
+       WHERE encrypted_session IS NOT NULL
+         AND encrypted_session != ''
+         AND status NOT IN ('pending', 'connecting', 'otp_sent', 'needs_password')
+       ORDER BY created_at ASC`
+    )
+    .all();
+};
+
+/**
+ * Return all Telegram user IDs that have ever used the bot.
+ * Used to send the startup restoration report to every known user.
+ *
+ * @returns {string[]}
+ */
+const getBotUserIds = () => {
+  return getDb()
+    .prepare(
+      'SELECT telegram_user_id FROM bot_users ORDER BY last_seen DESC'
+    )
+    .all()
+    .map((r) => r.telegram_user_id);
+};
+
+module.exports = {
+  getDb,
+  accountQueries,
+  botUserQueries,
+  getAllAccountsWithSession,
+  getBotUserIds,
+};
