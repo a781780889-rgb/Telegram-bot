@@ -3,12 +3,16 @@
  *
  * Handles all low-level MTProto interactions:
  *  - OTP login flow (sendOtp → verifyOtp → optional verifyPassword)
- *  - Session persistence (encrypted on disk)
- *  - Loading saved sessions for search operations
+ *  - Session persistence (encrypted on disk + DB backup)
+ *  - Loading / restoring saved sessions
  *  - Managing active client lifecycle
  *
  * TIMEOUT fix: use WebSocket (useWSS: true) so the MTProto connection
  * survives Railway's TCP-idle-kill policy.
+ *
+ * PERSISTENCE fix: restoreSessionFile() recreates the session file from
+ * the encrypted_session stored in the DB when the file is missing (e.g.
+ * after a container restart or a fresh deployment).
  */
 
 const { TelegramClient } = require('telegram');
@@ -70,8 +74,7 @@ const translateTelegramError = (error) => {
  * Build a new TelegramClient instance.
  *
  * @param {string}  sessionString  Saved session string, or '' for a fresh session.
- * @param {boolean} forSearch      True ⇒ short-lived client for reading messages
- *                                 (fewer retries, auto-reconnect disabled).
+ * @param {boolean} forSearch      True ⇒ short-lived client for reading messages.
  * @returns {{ client: TelegramClient, session: StringSession }}
  */
 const buildClient = (sessionString = '', forSearch = false) => {
@@ -85,26 +88,14 @@ const buildClient = (sessionString = '', forSearch = false) => {
   const session = new StringSession(sessionString);
 
   const client = new TelegramClient(session, apiId, apiHash, {
-    // ── Connectivity ──────────────────────────────────────────────────────
-    // useWSS = true: use WebSocket Secure instead of raw TCP.
-    // Raw TCP long-lived connections are killed by Railway's network
-    // infrastructure; WebSocket keep-alive frames keep the connection alive.
-    useWSS:           true,
-
-    // ── Retry behaviour ───────────────────────────────────────────────────
+    useWSS:            true,
     connectionRetries: forSearch ? 2 : 5,
     retryDelay:        forSearch ? 1000 : 2000,
-
-    // For search clients we disable auto-reconnect: the client is used once
-    // then explicitly disconnected, so background reconnect loops are wasteful
-    // and generate spurious TIMEOUT errors in logs.
-    autoReconnect: !forSearch,
-
-    // ── Identification ────────────────────────────────────────────────────
-    deviceModel:   'Desktop',
-    systemVersion: 'Linux',
-    appVersion:    '1.0.0',
-    langCode:      'ar',
+    autoReconnect:     !forSearch,
+    deviceModel:       'Desktop',
+    systemVersion:     'Linux',
+    appVersion:        '1.0.0',
+    langCode:          'ar',
   });
 
   return { client, session };
@@ -118,7 +109,6 @@ const buildClient = (sessionString = '', forSearch = false) => {
  * @returns {Promise<{ pendingKey: string }>}
  */
 const sendOtp = async (phone) => {
-  // Clean up any stale pending session for this phone
   if (pendingSessions.has(phone)) {
     const old = pendingSessions.get(phone);
     try { await old.client.disconnect(); } catch (_) {}
@@ -232,6 +222,9 @@ const verifyPassword = async (phone, password) => {
 
 /**
  * Encrypt and write the session string to disk.
+ * Always uses the canonical path derived from sessionsDir + phone + id
+ * so that the path stays valid even if the environment changes.
+ *
  * @param {number} accountId
  * @param {string} phone
  * @param {string} sessionString
@@ -243,21 +236,60 @@ const saveSession = (accountId, phone, sessionString) => {
   const sessionFile      = path.join(sessionsDir, `${safePhone}_${accountId}.enc`);
 
   fs.writeFileSync(sessionFile, encryptedSession, 'utf-8');
-  logger.info(`Session saved for account ${accountId}`);
+  logger.info(`Session saved for account ${accountId} → ${sessionFile}`);
 
   return { sessionFile, encryptedSession };
 };
 
 /**
+ * Restore a session file from the encrypted_session stored in the database.
+ *
+ * Called on startup when the session file may be missing (e.g. after a
+ * container restart or a fresh deployment to Railway / another host).
+ * The canonical file path is always recomputed from the current
+ * SESSIONS_DIR so that stale absolute paths in the DB are corrected.
+ *
+ * @param {object} account  Full account row from the database.
+ *                          Must have: id, phone, encrypted_session.
+ * @returns {string|null}   Absolute path to the session file,
+ *                          or null if restoration is not possible.
+ */
+const restoreSessionFile = (account) => {
+  if (!account.encrypted_session) {
+    return null;
+  }
+
+  const safePhone       = account.phone.replace(/[^0-9]/g, '');
+  const canonicalPath   = path.join(sessionsDir, `${safePhone}_${account.id}.enc`);
+
+  // File already present at the canonical path — nothing to do.
+  if (fs.existsSync(canonicalPath)) {
+    return canonicalPath;
+  }
+
+  // File missing — recreate from the DB backup (encrypted_session column).
+  try {
+    fs.writeFileSync(canonicalPath, account.encrypted_session, 'utf-8');
+    logger.info(
+      `Session Restore: file recreated from DB backup for account ${account.id} (${account.phone})`
+    );
+    return canonicalPath;
+  } catch (error) {
+    logger.error(
+      `Session Restore: failed to recreate session file for account ${account.id}:`,
+      error
+    );
+    return null;
+  }
+};
+
+/**
  * Load a saved, encrypted session from disk and return an authenticated client.
  *
- * The returned client is configured for search (forSearch = true):
- *   - fewer retries
- *   - auto-reconnect disabled → prevents background TIMEOUT loops
- *
+ * The returned client is configured for search (forSearch = true).
  * Callers are responsible for calling client.disconnect() when done.
  *
- * @param {string} sessionFile
+ * @param {string} sessionFile  Absolute or relative path to the .enc file.
  * @returns {Promise<TelegramClient>}
  */
 const loadSession = async (sessionFile) => {
@@ -340,6 +372,7 @@ module.exports = {
   verifyPassword,
   saveSession,
   loadSession,
+  restoreSessionFile,
   registerActiveClient,
   disconnectClient,
   cleanupPending,
