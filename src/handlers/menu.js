@@ -3,6 +3,7 @@ const sessionState = require('../services/sessionState');
 const { mainMenuKeyboard, backToMenuKeyboard } = require('../utils/keyboards');
 const { welcomeMessage, helpMessage } = require('../utils/messages');
 const logger = require('../utils/logger');
+const { Markup } = require('telegraf');
 
 /**
  * /start command handler
@@ -37,9 +38,13 @@ const handleMainMenu = async (ctx) => {
       parse_mode: 'Markdown',
       ...mainMenuKeyboard(),
     });
+    await ctx.answerCbQuery();
   } catch (error) {
     logger.error('handleMainMenu error:', error);
-    await ctx.reply('القائمة الرئيسية:', mainMenuKeyboard());
+    await ctx.reply(welcomeMessage(ctx.from.first_name), {
+      parse_mode: 'Markdown',
+      ...mainMenuKeyboard(),
+    });
   }
 };
 
@@ -48,16 +53,19 @@ const handleMainMenu = async (ctx) => {
  */
 const handleHelp = async (ctx) => {
   try {
-    const { Markup } = require('telegraf');
     await ctx.editMessageText(helpMessage, {
       parse_mode: 'Markdown',
       ...Markup.inlineKeyboard([
         [Markup.button.callback('🔙 القائمة الرئيسية', 'main_menu')],
       ]),
     });
+    await ctx.answerCbQuery();
   } catch (error) {
     logger.error('handleHelp error:', error);
-    await ctx.reply(helpMessage, { parse_mode: 'Markdown', ...backToMenuKeyboard() });
+    await ctx.reply(helpMessage, {
+      parse_mode: 'Markdown',
+      ...backToMenuKeyboard(),
+    });
   }
 };
 
