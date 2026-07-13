@@ -68,6 +68,8 @@ const {
   handleLinksConfirmClean,
 } = require('./handlers/linksMenu');
 
+const { restoreAllAccounts } = require('./services/sessionRestoreService');
+
 // ─── Validate required environment variables ──────────────────────────────────
 
 const requiredEnvVars = ['BOT_TOKEN', 'API_ID', 'API_HASH', 'ENCRYPTION_KEY'];
@@ -211,37 +213,31 @@ bot.action('accounts_stats', handleAccountsStats);
 
 // ─── Dynamic Account Callbacks ────────────────────────────────────────────────
 
-// Account detail
 bot.action(/^account_detail_(\d+)$/, async (ctx) => {
   const accountId = parseInt(ctx.match[1], 10);
   await handleAccountDetail(ctx, accountId);
 });
 
-// Edit account
 bot.action(/^edit_account_(\d+)$/, async (ctx) => {
   const accountId = parseInt(ctx.match[1], 10);
   await handleEditAccount(ctx, accountId);
 });
 
-// Check single account status
 bot.action(/^check_status_(\d+)$/, async (ctx) => {
   const accountId = parseInt(ctx.match[1], 10);
   await handleCheckStatus(ctx, accountId);
 });
 
-// Delete confirmation
 bot.action(/^delete_confirm_(\d+)$/, async (ctx) => {
   const accountId = parseInt(ctx.match[1], 10);
   await handleDeleteConfirm(ctx, accountId);
 });
 
-// Delete confirmed
 bot.action(/^delete_yes_(\d+)$/, async (ctx) => {
   const accountId = parseInt(ctx.match[1], 10);
   await handleDeleteAccount(ctx, accountId);
 });
 
-// Re-login
 bot.action(/^relogin_(\d+)$/, async (ctx) => {
   const accountId = parseInt(ctx.match[1], 10);
   await handleRelogin(ctx, accountId);
@@ -284,6 +280,15 @@ const startBot = async () => {
     const botInfo = await bot.telegram.getMe();
     logger.info(`Bot started successfully: @${botInfo.username} (ID: ${botInfo.id})`);
     logger.info('Bot is ready to receive messages.');
+
+    // Restore all saved accounts after the bot is fully online.
+    // Running in setImmediate ensures the bot's polling loop has started
+    // before we attempt to send notification messages to users.
+    setImmediate(() => {
+      restoreAllAccounts(bot).catch((err) => {
+        logger.error('Session Restore: unexpected error during startup restoration:', err);
+      });
+    });
   } catch (error) {
     logger.error('Failed to start bot:', error);
     process.exit(1);
