@@ -59,6 +59,12 @@ const initializeSchema = () => {
   `);
 
   logger.info('Database schema initialized');
+
+  // Initialize links schema (lazy import to avoid circular dep)
+  try {
+    const { initLinksSchema } = require('./linksDb');
+    initLinksSchema();
+  } catch (_) {}
 };
 
 // ─── Account Queries ──────────────────────────────────────────────────────────
