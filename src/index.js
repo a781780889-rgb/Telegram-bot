@@ -70,6 +70,32 @@ const {
 
 const { restoreAllAccounts } = require('./services/sessionRestoreService');
 
+const subscriptionsMenu = require('./handlers/subscriptionsMenu');
+const { startSubscriptionScheduler } = require('./services/subscriptionsService');
+const {
+  requireAdmin,
+  handleSubscriptionsMenu,
+  handleSubCancel,
+  handleSubNoop,
+  handleSubscriptionsStats,
+  handleSubscriptionsLog,
+  handleSubscriptionsLogPage,
+  handleSubscriptionsAlerts,
+  handleAlertsToggle,
+  handleSubscriptionsSettings,
+  handleSettingsCurrencyMenu,
+  handleSettingsSetCurrency,
+  handleSettingsTaxStart,
+  handleSettingsMessageEditStart,
+  handleSettingsToggle,
+  packagesHandler,
+  subscribersHandler,
+  paymentsHandler,
+  couponsHandler,
+  offersHandler,
+  storefrontHandler,
+} = subscriptionsMenu;
+
 // ─── Validate required environment variables ──────────────────────────────────
 
 const requiredEnvVars = ['BOT_TOKEN', 'API_ID', 'API_HASH', 'ENCRYPTION_KEY'];
@@ -243,6 +269,145 @@ bot.action(/^relogin_(\d+)$/, async (ctx) => {
   await handleRelogin(ctx, accountId);
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 💎 Subscriptions Module — all routes prefixed "sub_" to avoid any collision
+// with the callbacks above. Admin-only routes are wrapped in requireAdmin();
+// storefront routes (sub_store_*) are open to every bot user.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ─── Root / shared ────────────────────────────────────────────────────────────
+
+bot.action('sub_menu', handleSubscriptionsMenu);
+bot.action('sub_cancel', handleSubCancel);
+bot.action('sub_noop', handleSubNoop);
+
+// ─── Admin menu entries ───────────────────────────────────────────────────────
+
+bot.action('sub_pkg_add', requireAdmin(packagesHandler.handlePackageAddStart));
+bot.action('sub_pkg_list', requireAdmin(packagesHandler.handlePackagesList));
+bot.action('sub_subr_list', requireAdmin(subscribersHandler.handleSubscribersList));
+bot.action('sub_pay_list', requireAdmin(paymentsHandler.handlePaymentsList));
+bot.action('sub_cpn_add', requireAdmin(couponsHandler.handleCouponAddStart));
+bot.action('sub_cpn_list', requireAdmin(couponsHandler.handleCouponsList));
+bot.action('sub_ofr_list', requireAdmin(offersHandler.handleOffersList));
+bot.action('sub_ofr_add', requireAdmin(offersHandler.handleOfferAddStart));
+bot.action('sub_alerts', requireAdmin(handleSubscriptionsAlerts));
+bot.action('sub_stats', requireAdmin(handleSubscriptionsStats));
+bot.action('sub_log', requireAdmin(handleSubscriptionsLog));
+bot.action('sub_settings', requireAdmin(handleSubscriptionsSettings));
+
+// ─── Packages ─────────────────────────────────────────────────────────────────
+
+bot.action(/^sub_pkg_page_(\d+)$/, requireAdmin(async (ctx) => {
+  await packagesHandler.handlePackagesList(ctx, parseInt(ctx.match[1], 10));
+}));
+bot.action(/^sub_pkg_view_(\d+)$/, requireAdmin(async (ctx) => {
+  await packagesHandler.handlePackageView(ctx, parseInt(ctx.match[1], 10));
+}));
+bot.action(/^sub_pkg_(toggle|special|dup|del|delyes|up|down|edit)_(\d+)$/, requireAdmin(packagesHandler.handlePackageAction));
+bot.action(/^sub_pkg_field_([a-z_]+)_(\d+)$/, requireAdmin(packagesHandler.handlePackageFieldEditStart));
+
+// Add-package wizard
+bot.action(/^sub_pkgw_cur_(.+)$/, requireAdmin(packagesHandler.handlePkgCurrencyPick));
+bot.action(/^sub_pkgw_dur_(\d+|custom)$/, requireAdmin(packagesHandler.handlePkgDurationPick));
+bot.action(/^sub_pkgw_unlim_(accounts|operations|users)$/, requireAdmin(packagesHandler.handlePkgUnlimited));
+bot.action('sub_pkgw_skip_desc', requireAdmin(packagesHandler.handlePkgSkipDescription));
+bot.action('sub_pkgw_skip_features', requireAdmin(packagesHandler.handlePkgSkipFeatures));
+bot.action(/^sub_pkgw_special_(yes|no)$/, requireAdmin(packagesHandler.handlePkgSpecial));
+bot.action('sub_pkgw_skip_badge', requireAdmin(packagesHandler.handlePkgSkipBadge));
+bot.action('sub_pkgw_confirm', requireAdmin(packagesHandler.handlePkgConfirm));
+
+// ─── Subscribers ──────────────────────────────────────────────────────────────
+
+bot.action(/^sub_subr_page_(\d+)$/, requireAdmin(subscribersHandler.handleSubscribersPage));
+bot.action(/^sub_subr_filter_(\w+)$/, requireAdmin(subscribersHandler.handleSubscribersFilter));
+bot.action(/^sub_subr_view_(\d+)$/, requireAdmin(async (ctx) => {
+  await subscribersHandler.handleSubscriberView(ctx, parseInt(ctx.match[1], 10));
+}));
+bot.action(
+  /^sub_subr_(changepkg|extend|renew|suspend|reactivate|cancel|cancelyes|autorenew|msg|notes|history)_(\d+)$/,
+  requireAdmin(subscribersHandler.handleSubscriberAction)
+);
+bot.action(/^sub_subr_setpkg_(\d+)_(\d+)$/, requireAdmin(subscribersHandler.handleSubscriberSetPackage));
+bot.action(/^sub_subr_extenddays_(\d+)_(\d+)$/, requireAdmin(subscribersHandler.handleSubscriberExtendDays));
+bot.action(/^sub_subr_extendcustom_(\d+)$/, requireAdmin(subscribersHandler.handleSubscriberExtendCustomStart));
+bot.action('sub_subr_search', requireAdmin(subscribersHandler.handleSubscribersSearchStart));
+
+// ─── Payments ─────────────────────────────────────────────────────────────────
+
+bot.action(/^sub_pay_page_(\d+)$/, requireAdmin(paymentsHandler.handlePaymentsPage));
+bot.action(/^sub_pay_filter_(\w+)$/, requireAdmin(paymentsHandler.handlePaymentsFilter));
+bot.action(/^sub_pay_view_(\d+)$/, requireAdmin(async (ctx) => {
+  await paymentsHandler.handlePaymentView(ctx, parseInt(ctx.match[1], 10));
+}));
+bot.action(/^sub_pay_(accept|reject|rejectnow|refund|refundyes)_(\d+)$/, requireAdmin(paymentsHandler.handlePaymentAction));
+bot.action('sub_pay_search', requireAdmin(paymentsHandler.handlePaymentsSearchStart));
+
+// ─── Coupons ──────────────────────────────────────────────────────────────────
+
+bot.action(/^sub_cpn_page_(\d+)$/, requireAdmin(async (ctx) => {
+  await couponsHandler.handleCouponsList(ctx, parseInt(ctx.match[1], 10));
+}));
+bot.action(/^sub_cpn_view_(\d+)$/, requireAdmin(async (ctx) => {
+  await couponsHandler.handleCouponView(ctx, parseInt(ctx.match[1], 10));
+}));
+bot.action(/^sub_cpn_(toggle|del|delyes)_(\d+)$/, requireAdmin(couponsHandler.handleCouponAction));
+
+// Add-coupon wizard
+bot.action('sub_cpnw_autocode', requireAdmin(couponsHandler.handleCpnAutoCode));
+bot.action('sub_cpnw_skip_name', requireAdmin(couponsHandler.handleCpnSkipName));
+bot.action(/^sub_cpnw_type_(percent|fixed)$/, requireAdmin(couponsHandler.handleCpnTypePick));
+bot.action('sub_cpnw_unlim_uses', requireAdmin(couponsHandler.handleCpnUnlimitedUses));
+bot.action('sub_cpnw_nolimit_date', requireAdmin(couponsHandler.handleCpnNoLimitDate));
+bot.action('sub_cpnw_setdate', requireAdmin(couponsHandler.handleCpnSetDateStart));
+bot.action(/^sub_cpnw_pkg_(\d+)$/, requireAdmin(couponsHandler.handleCpnTogglePackage));
+bot.action('sub_cpnw_pkg_confirm', requireAdmin(couponsHandler.handleCpnPackagesConfirm));
+bot.action('sub_cpnw_confirm', requireAdmin(couponsHandler.handleCpnConfirm));
+
+// ─── Offers ───────────────────────────────────────────────────────────────────
+
+bot.action(/^sub_ofr_view_(\d+)$/, requireAdmin(async (ctx) => {
+  await offersHandler.handleOfferView(ctx, parseInt(ctx.match[1], 10));
+}));
+bot.action(/^sub_ofr_(toggle|del|delyes)_(\d+)$/, requireAdmin(offersHandler.handleOfferAction));
+
+// Add-offer wizard
+bot.action('sub_ofrw_skip_desc', requireAdmin(offersHandler.handleOfrSkipDescription));
+bot.action(/^sub_ofrw_type_(discount|bogo|free_extension|free_upgrade|limited_time)$/, requireAdmin(offersHandler.handleOfrTypePick));
+bot.action(/^sub_ofrw_pkg_(\d+|all)$/, requireAdmin(offersHandler.handleOfrPackagePick));
+bot.action('sub_ofrw_nodate', requireAdmin(offersHandler.handleOfrNoDate));
+bot.action('sub_ofrw_setdate', requireAdmin(offersHandler.handleOfrSetDateStart));
+
+// ─── Alerts (quick toggles) ───────────────────────────────────────────────────
+
+bot.action(/^sub_alerts_toggle_(\w+)$/, requireAdmin(handleAlertsToggle));
+
+// ─── Settings ─────────────────────────────────────────────────────────────────
+
+bot.action('sub_settings_currency', requireAdmin(handleSettingsCurrencyMenu));
+bot.action(/^sub_settings_setcur_(\w+)$/, requireAdmin(handleSettingsSetCurrency));
+bot.action('sub_settings_tax', requireAdmin(handleSettingsTaxStart));
+bot.action(/^sub_settings_msg_(\w+)$/, requireAdmin(handleSettingsMessageEditStart));
+bot.action(/^sub_settings_toggle_(\w+)$/, requireAdmin(handleSettingsToggle));
+
+// ─── Operations log ───────────────────────────────────────────────────────────
+
+bot.action(/^sub_log_page_(\d+)$/, requireAdmin(handleSubscriptionsLogPage));
+
+// ─── Storefront (subscriber-facing — open to all users, not admin-gated) ──────
+
+bot.action('sub_store_mysub', storefrontHandler.handleStoreMySubscription);
+bot.action('sub_store_packages', storefrontHandler.handleStorePackages);
+bot.action(/^sub_store_pkg_(\d+)$/, async (ctx) => {
+  await storefrontHandler.handleStorePackageView(ctx, parseInt(ctx.match[1], 10));
+});
+bot.action(/^sub_store_subscribe_(\d+)$/, storefrontHandler.handleStoreSubscribeStart);
+bot.action(/^sub_store_coupon_yes_(\d+)$/, storefrontHandler.handleStoreCouponYes);
+bot.action(/^sub_store_coupon_no_(\d+)$/, storefrontHandler.handleStoreCouponNo);
+bot.action(/^sub_store_confirm_(\d+)$/, storefrontHandler.handleStoreConfirm);
+bot.action('sub_store_offers', storefrontHandler.handleStoreOffers);
+bot.action('sub_store_history', storefrontHandler.handleStoreHistory);
+
 // ─── Text Message Router ──────────────────────────────────────────────────────
 
 bot.on('text', textRouter);
@@ -289,6 +454,9 @@ const startBot = async () => {
         logger.error('Session Restore: unexpected error during startup restoration:', err);
       });
     });
+
+    // Start the subscriptions module's background scheduler (pre/post expiry alerts).
+    startSubscriptionScheduler(bot);
   } catch (error) {
     logger.error('Failed to start bot:', error);
     process.exit(1);
