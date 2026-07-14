@@ -134,6 +134,14 @@ const initializeSchema = () => {
     const { initLinksSchema } = require('./linksDb');
     initLinksSchema();
   } catch (_) {}
+
+  // Lazy-import subscriptionsDb to avoid circular dependency (same pattern as linksDb above)
+  try {
+    const { initSubscriptionsSchema } = require('./subscriptionsDb');
+    initSubscriptionsSchema();
+  } catch (error) {
+    logger.error('Failed to initialize subscriptions schema:', error);
+  }
 };
 
 // ─── Account Queries ──────────────────────────────────────────────────────────
