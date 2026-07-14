@@ -83,6 +83,8 @@ const {
   handleJoinLogs,
   handleJoinSettings,
   handleJoinEditSetting,
+  handleJoinLinksFileInput,
+  isAwaitingLinksFile,
 } = require('./handlers/joinMenu');
 
 const { restoreAllAccounts } = require('./services/sessionRestoreService');
@@ -482,6 +484,16 @@ bot.action('sub_store_history', storefrontHandler.handleStoreHistory);
 // ─── Text Message Router ──────────────────────────────────────────────────────
 
 bot.on('text', textRouter);
+
+// ─── Document Upload Router (links file for join-to-links feature) ────────────
+
+bot.on('document', async (ctx) => {
+  if (ctx.chat?.type !== 'private') return;
+  const uid = String(ctx.from.id);
+  if (isAwaitingLinksFile(uid)) {
+    await handleJoinLinksFileInput(ctx);
+  }
+});
 
 // ─── Graceful Shutdown ────────────────────────────────────────────────────────
 
