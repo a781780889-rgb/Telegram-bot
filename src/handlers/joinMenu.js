@@ -3,6 +3,7 @@
  * Handles all callbacks and text inputs for the 🔗 قسم الانضمام للروابط section
  */
 
+const https = require('https');
 const logger = require('../utils/logger');
 const { accountQueries } = require('../database/db');
 const {
@@ -36,6 +37,10 @@ const {
   joinAccountDetailMessage,
   joinAddLinksPromptMessage,
   joinAddLinksResultMessage,
+  joinFileWrongTypeMessage,
+  joinFileTooLargeMessage,
+  joinFileEmptyMessage,
+  joinFileReadErrorMessage,
   joinStartConfirmMessage,
   joinNoPendingLinksMessage,
   joinNoAvailableAccountsMessage,
@@ -189,6 +194,100 @@ const handleJoinLinksTextInput = async (ctx) => {
     logger.error('handleJoinLinksTextInput error:', error);
     await ctx.reply('⚠️ حدث خطأ أثناء معالجة الروابط. حاول مرة أخرى.');
   }
+};
+
+const MAX_LINKS_FILE_SIZE = 2 * 1024 * 1024; // 2 MB
+
+/**
+ * Download a Telegram file URL into a UTF-8 string in memory.
+ * Uses Node's built-in https module — no new dependency required.
+ * @param {string} url
+ * @returns {Promise<string>}
+ */
+const downloadFileAsText = (url) => {
+  return new Promise((resolve, reject) => {
+    https
+      .get(url, (res) => {
+        if (res.statusCode !== 200) {
+          reject(new Error(`HTTP_${res.statusCode}`));
+          res.resume();
+          return;
+        }
+        const chunks = [];
+        let size = 0;
+        res.on('data', (chunk) => {
+          size += chunk.length;
+          if (size > MAX_LINKS_FILE_SIZE) {
+            reject(new Error('FILE_TOO_LARGE'));
+            res.destroy();
+            return;
+          }
+          chunks.push(chunk);
+        });
+        res.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
+        res.on('error', reject);
+      })
+      .on('error', reject);
+  });
+};
+
+/**
+ * Called from index.js's bot.on('document', ...) when the user is in the
+ * AWAITING_LINKS wizard step and sends a file instead of typing links.
+ * Only .txt files are accepted; content is parsed with the same
+ * extractLinksFromText() used for pasted text, so dedup/validation rules
+ * are identical for both input methods.
+ */
+const handleJoinLinksFileInput = async (ctx) => {
+  const uid = userId(ctx);
+  const doc = ctx.message?.document;
+
+  try {
+    if (!doc) return;
+
+    const fileName = doc.file_name || '';
+    const isTxt = /\.txt$/i.test(fileName) || doc.mime_type === 'text/plain';
+    if (!isTxt) {
+      await ctx.reply(joinFileWrongTypeMessage, { parse_mode: 'Markdown' });
+      return;
+    }
+
+    if (doc.file_size && doc.file_size > MAX_LINKS_FILE_SIZE) {
+      await ctx.reply(joinFileTooLargeMessage, { parse_mode: 'Markdown' });
+      return;
+    }
+
+    const fileLink = await ctx.telegram.getFileLink(doc.file_id);
+    const content = await downloadFileAsText(fileLink.href);
+
+    const { links, invalidCount } = joinService.extractLinksFromText(content);
+
+    if (!links.length) {
+      await ctx.reply(joinFileEmptyMessage, { parse_mode: 'Markdown' });
+      return;
+    }
+
+    const addedCount = joinLinkQueries.insertMany(uid, links);
+    wizardState.resetWizard(uid);
+
+    await ctx.reply(joinAddLinksResultMessage(addedCount, invalidCount, 0), {
+      parse_mode: 'Markdown',
+      ...joinAddLinksResultKeyboard(),
+    });
+  } catch (error) {
+    logger.error('handleJoinLinksFileInput error:', error);
+    await ctx.reply(joinFileReadErrorMessage, { parse_mode: 'Markdown' });
+  }
+};
+
+/**
+ * Whether the given user is currently in the AWAITING_LINKS step and thus
+ * an incoming document should be routed to handleJoinLinksFileInput.
+ * @param {string} uid
+ */
+const isAwaitingLinksFile = (uid) => {
+  const wiz = wizardState.getWizardState(uid);
+  return wiz.step === WIZARD_STEPS.AWAITING_LINKS;
 };
 
 // ─── Start / Stop ─────────────────────────────────────────────────────────────
@@ -430,6 +529,8 @@ module.exports = {
   handleJoinAccountEnable,
   handleJoinAccountDisable,
   handleJoinAddLinks,
+  handleJoinLinksFileInput,
+  isAwaitingLinksFile,
   handleJoinStart,
   handleJoinStartConfirm,
   handleJoinStop,
