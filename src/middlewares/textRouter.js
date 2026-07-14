@@ -1,12 +1,14 @@
 const sessionState = require('../services/sessionState');
 const { STATES } = require('../services/sessionState');
 const linksWizardState = require('../services/linksWizardState');
+const subscriptionsWizardState = require('../services/subscriptionsWizardState');
 const {
   handlePhoneInput,
   handleOtpInput,
   handlePasswordInput,
 } = require('../handlers/addAccount');
 const { handleLinksTextInput } = require('../handlers/linksMenu');
+const { handleSubscriptionsTextInput } = require('../handlers/subscriptionsMenu');
 const { mainMenuKeyboard } = require('../utils/keyboards');
 const logger = require('../utils/logger');
 
@@ -40,6 +42,12 @@ const textRouter = async (ctx, next) => {
   if (linksWizardState.isAwaitingTextInput(userId)) {
     await handleLinksTextInput(ctx);
     return;
+  }
+
+  // ─── Subscriptions wizard takes priority when user is in a text-input step ──
+  if (subscriptionsWizardState.isAwaitingTextInput(userId)) {
+    const handled = await handleSubscriptionsTextInput(ctx);
+    if (handled) return;
   }
 
   switch (state) {
