@@ -19,6 +19,7 @@ const subscribersHandler = require('./subscriptionsSubscribers');
 const paymentsHandler = require('./subscriptionsPayments');
 const couponsHandler = require('./subscriptionsCoupons');
 const offersHandler = require('./subscriptionsOffers');
+const activationCodesHandler = require('./subscriptionsActivationCodes');
 const storefrontHandler = require('./subscriptionsStorefront');
 
 const actorName = (ctx) => ctx.from.first_name || ctx.from.username || String(ctx.from.id);
@@ -236,6 +237,7 @@ const handleSubscriptionsTextInput = async (ctx) => {
     if (step.startsWith('PAY_')) return await paymentsHandler.handlePaymentsTextInput(ctx, wizardState);
     if (step.startsWith('CPN_')) return await couponsHandler.handleCouponsTextInput(ctx, wizardState);
     if (step.startsWith('OFR_')) return await offersHandler.handleOffersTextInput(ctx, wizardState);
+    if (step.startsWith('CODE_')) return await activationCodesHandler.handleActivationCodesTextInput(ctx, wizardState);
     if (step.startsWith('SET_')) return await handleSettingsTextInput(ctx, wizardState);
     if (step.startsWith('STORE_')) return await storefrontHandler.handleStorefrontTextInput(ctx, wizardState);
   } catch (error) {
@@ -271,5 +273,6 @@ module.exports = {
   paymentsHandler,
   couponsHandler,
   offersHandler,
+  activationCodesHandler,
   storefrontHandler,
 };

@@ -3,7 +3,8 @@
  */
 
 const {
-  packageQueries, subscriberQueries, paymentQueries, offerQueries, operationsLogQueries, settingsQueries,
+  packageQueries, subscriberQueries, subscriberHistoryQueries, paymentQueries, offerQueries,
+  activationCodeQueries, activationCodeUseQueries, operationsLogQueries, settingsQueries,
 } = require('../database/subscriptionsDb');
 const wiz = require('../services/subscriptionsWizardState');
 const svc = require('../services/subscriptionsService');
@@ -19,7 +20,8 @@ const handleStoreMenu = async (ctx) => {
   try {
     ensureSubscriber(ctx);
     const settings = settingsQueries.getAll();
-    await svc.safeEdit(ctx, msg.storeMenuMessage(settings.welcome_message), kb.subStoreMenuKeyboard());
+    const noAdmin = !svc.hasAnyAdminConfigured();
+    await svc.safeEdit(ctx, msg.storeMenuMessage(settings.welcome_message, ctx.from.id, noAdmin), kb.subStoreMenuKeyboard());
     if (ctx.callbackQuery) await ctx.answerCbQuery();
   } catch (error) {
     logger.error('handleStoreMenu error:', error);
@@ -206,6 +208,72 @@ const handleStoreConfirm = async (ctx) => {
   }
 };
 
+// ─── Redeem an activation code (🔑 لدي كود تفعيل) ──────────────────────────────
+
+const handleStoreRedeemStart = async (ctx) => {
+  wiz.startWizard(ctx.from.id, wiz.STEPS.STORE_REDEEM_CODE, {});
+  await svc.safeEdit(ctx, msg.storeRedeemPromptMessage, kb.subCancelKeyboard());
+  if (ctx.callbackQuery) await ctx.answerCbQuery();
+};
+
+const redeemActivationCode = async (ctx, rawCode) => {
+  const userId = ctx.from.id;
+  const result = svc.validateActivationCode(rawCode);
+
+  if (!result.valid) {
+    await ctx.reply(msg.storeRedeemInvalidMessage(result.reason), kb.subCancelKeyboard());
+    return; // wizard step stays active so the subscriber can just try another code
+  }
+
+  const { codeRow } = result;
+  const pkg = packageQueries.getById(codeRow.package_id);
+  if (!pkg || !pkg.is_active) {
+    await ctx.reply(msg.storeRedeemInvalidMessage('الباقة المرتبطة بهذا الكود لم تعد متاحة.'), kb.subCancelKeyboard());
+    return;
+  }
+
+  wiz.resetWizard(userId);
+  ensureSubscriber(ctx);
+
+  const existing = subscriberQueries.getByTelegramId(userId);
+  const wasActive = existing?.status === 'active';
+  const newExpiry = svc.calculateExpiryDate(pkg.duration_days);
+
+  subscriberQueries.activate(userId, pkg.id, newExpiry);
+  subscriberHistoryQueries.add(userId, wasActive ? 'renewed' : 'subscribed', pkg.id, userId, JSON.stringify({ activationCode: codeRow.code }));
+
+  activationCodeQueries.incrementUse(codeRow.id);
+  activationCodeUseQueries.add(codeRow.id, userId);
+
+  const payment = paymentQueries.create({
+    telegram_user_id: userId,
+    username: ctx.from.username,
+    package_id: pkg.id,
+    package_name: pkg.name,
+    amount: pkg.price,
+    original_amount: pkg.price,
+    currency: pkg.currency,
+    payment_method: 'activation_code',
+  });
+  paymentQueries.updateStatus(payment.id, 'accepted', null, `تفعيل ذاتي عبر كود: ${codeRow.code}`);
+
+  operationsLogQueries.log({
+    actionType: 'activation_code_redeemed', actorId: userId, actorRole: 'subscriber', actorName: ctx.from.username,
+    targetType: 'activation_code', targetId: codeRow.id, details: { code: codeRow.code, package: pkg.name },
+  });
+
+  const settings = settingsQueries.getAll();
+  if (settings.notify_admin_on_new_payment === '1') {
+    await svc.notifyAdmins(
+      { telegram: ctx.telegram },
+      `🔑 *تفعيل عبر كود*\n\n👤 ${ctx.from.username ? `@${ctx.from.username}` : userId} (\`${userId}\`)\n📦 ${pkg.name}\n🔖 الكود: \`${codeRow.code}\``
+    );
+  }
+
+  await svc.safeEdit(ctx, msg.storeRedeemSuccessMessage(pkg, newExpiry), kb.subStoreBackKeyboard());
+  if (ctx.callbackQuery) await ctx.answerCbQuery('✅ تم التفعيل');
+};
+
 // ─── Offers / History ───────────────────────────────────────────────────────────
 
 const handleStoreOffers = async (ctx) => {
@@ -255,6 +323,11 @@ const handleStorefrontTextInput = async (ctx, wizardState) => {
     return true;
   }
 
+  if (step === wiz.STEPS.STORE_REDEEM_CODE) {
+    await redeemActivationCode(ctx, ctx.message.text.trim());
+    return true;
+  }
+
   return false;
 };
 
@@ -267,6 +340,7 @@ module.exports = {
   handleStoreCouponYes,
   handleStoreCouponNo,
   handleStoreConfirm,
+  handleStoreRedeemStart,
   handleStoreOffers,
   handleStoreHistory,
   handleStorefrontTextInput,
