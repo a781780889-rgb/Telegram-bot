@@ -100,6 +100,16 @@ const {
   handleFoldersEditGroupsPerFolder,
 } = require('./handlers/foldersMenu');
 
+const {
+  handlePublishMenu,
+  handleAdsLibrary,
+  handleAdAddStart,
+  handleAdView,
+  handleDashboard,
+  handlePublishLogs,
+} = require('./handlers/publishMenu');
+const { startPublishScheduler } = require('./services/publishService');
+
 const { restoreAllAccounts } = require('./services/sessionRestoreService');
 
 const subscriptionsMenu = require('./handlers/subscriptionsMenu');
@@ -301,6 +311,18 @@ bot.action('folders_organize', handleFoldersOrganize);
 bot.action('folders_list', handleFoldersList);
 bot.action('folders_settings', handleFoldersSettings);
 bot.action('folders_edit_groups_per_folder', handleFoldersEditGroupsPerFolder);
+
+// ─── Publish Engine Callbacks ────────────────────────────────────────────────
+bot.action('publish_menu', handlePublishMenu);
+bot.action('publish_ads_library', handleAdsLibrary);
+bot.action('publish_ad_add', handleAdAddStart);
+bot.action('publish_dashboard', handleDashboard);
+bot.action('publish_dashboard_refresh', handleDashboard);
+bot.action('publish_logs', handlePublishLogs);
+
+bot.action(/^publish_ad_view_(\d+)$/, async (ctx) => {
+  await handleAdView(ctx, parseInt(ctx.match[1], 10));
+});
 
 bot.action(/^folder_detail_(\d+)$/, async (ctx) => {
   await handleFolderDetail(ctx, parseInt(ctx.match[1], 10));
@@ -575,6 +597,9 @@ const startBot = async () => {
 
     // Start the subscriptions module's background scheduler (pre/post expiry alerts).
     startSubscriptionScheduler(bot);
+
+    // Start the publish engine's background scheduler.
+    startPublishScheduler();
   } catch (error) {
     logger.error('Failed to start bot:', error);
     process.exit(1);
