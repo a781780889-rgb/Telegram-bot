@@ -275,7 +275,10 @@ const runAccountWorker = async (userId, account, settings, queueRef, run) => {
       const result = await joinOneLink(client, userId, linkRow);
 
       if (result.status === 'joined') {
-        joinGroupQueries.register(userId, result.telegramId, result.title, account.id, linkRow.url);
+        joinGroupQueries.register(userId, result.telegramId, result.title, account.id, linkRow.url, {
+          linkType: linkRow.url_type || parseLink(linkRow.url).type,
+          source: 'join',
+        });
         joinLinkQueries.updateStatus(linkRow.id, 'joined', {
           telegram_id: result.telegramId,
           assigned_account_id: account.id,
