@@ -350,6 +350,78 @@ const ofrConfirmDeleteMessage = (offer) => `🗑 هل تريد حذف العرض
 
 const ofrDeletedMessage = (offer) => `🗑 تم حذف العرض *${offer.title}*.`;
 
+// ─── Activation Codes (أكواد التفعيل) ─────────────────────────────────────────
+
+const codeWizardPackageMessage = '🔑 *توليد أكواد تفعيل*\n\n*الخطوة 1/3:* اختر الباقة التي ستمنحها الأكواد:';
+
+const codeWizardQuantityMessage = (pkgName) =>
+  `✅ الباقة: *${pkgName}*\n\n*الخطوة 2/3:* كم كودًا تريد توليده؟ (رقم من 1 إلى 100)`;
+
+const codeWizardQuantityInvalidMessage = '⚠️ أدخل رقمًا صحيحًا بين 1 و100.';
+
+const codeWizardExpiryMessage = '*الخطوة 3/3:* هل للأكواد تاريخ انتهاء صلاحية؟';
+
+const codeWizardDateInputMessage = 'أدخل تاريخ الانتهاء بصيغة YYYY-MM-DD:';
+
+const codeWizardDateInvalidMessage = '⚠️ صيغة التاريخ غير صحيحة. استخدم الصيغة: YYYY-MM-DD';
+
+/**
+ * The main payoff screen: a copy-paste-ready monospace block of codes.
+ * @param {string[]} codes
+ * @param {object} pkg
+ * @param {string|null} expiresAt
+ */
+const codeBatchGeneratedMessage = (codes, pkg, expiresAt) => {
+  const codesBlock = codes.map((c) => `\`${c}\``).join('\n');
+  return (
+    `✅ *تم توليد ${codes.length} كود تفعيل بنجاح*\n${DIV}\n\n` +
+    `*الباقة:* ${pkg.name} (${svc.formatDuration(pkg.duration_days)})\n` +
+    `*صالحة حتى:* ${expiresAt ? svc.formatDate(expiresAt) : 'بدون تاريخ انتهاء'}\n` +
+    `*نوع الاستخدام:* مرة واحدة لكل كود\n\n` +
+    `*الأكواد (اضغط على أي كود لنسخه):*\n${codesBlock}\n\n` +
+    `شارك كل كود مع مشترك واحد فقط ليقوم بتفعيله من 🔑 "لدي كود تفعيل" داخل قسم الاشتراكات.`
+  );
+};
+
+const codeNoCodesMessage = '🔑 *أكواد التفعيل*\n\nلا توجد أكواد بعد. اضغط لتوليد أول دفعة أكواد.';
+
+const codeListHeaderMessage = (total) => `🔑 *أكواد التفعيل* (${total})\n${DIV}\n\nاختر كودًا لعرض تفاصيله:`;
+
+const codeDetailMessage = (code, pkg, uses) => {
+  let text =
+    `🔑 *${code.code}*\n${DIV}\n\n` +
+    `*الباقة:* ${pkg ? pkg.name : 'غير معروفة'}\n` +
+    `*الاستخدام:* ${code.used_count} / ${code.max_uses}\n` +
+    `*صالح حتى:* ${code.expires_at ? svc.formatDate(code.expires_at) : 'بدون تاريخ انتهاء'}\n` +
+    `*الحالة:* ${code.is_active ? '🟢 مفعّل' : '⚪️ معطّل'}\n` +
+    `*أُنشئ في:* ${svc.formatDate(code.created_at)}`;
+
+  if (uses?.length) {
+    text += `\n\n*استُخدم بواسطة:*\n${uses.map((u) => `  • \`${u.telegram_user_id}\` — ${svc.formatDateTime(u.used_at)}`).join('\n')}`;
+  }
+  return text;
+};
+
+const codeToggledMessage = (code) => `الكود *${code.code}* الآن ${code.is_active ? 'مفعّل 🟢' : 'معطّل ⚪️'}.`;
+
+const codeConfirmDeleteMessage = (code) => `🗑 هل تريد حذف الكود *${code.code}*؟\n\nإذا كان مستخدمًا، سجل الاستخدام يبقى محفوظًا.`;
+
+const codeDeletedMessage = (code) => `🗑 تم حذف الكود *${code.code}*.`;
+
+const CODE_FILTER_LABELS = { all: 'الكل', unused: 'غير مستخدمة', used: 'مستخدمة', expired: 'منتهية' };
+
+// ─── Storefront: redeem an activation code ────────────────────────────────────
+
+const storeRedeemPromptMessage = '🔑 أدخل كود التفعيل الذي حصلت عليه:';
+
+const storeRedeemInvalidMessage = (reason) => `❌ ${reason}\n\nتحقّق من الكود وحاول مرة أخرى، أو اضغط إلغاء.`;
+
+const storeRedeemSuccessMessage = (pkg, expiresAt) =>
+  `✅ *تم تفعيل اشتراكك بنجاح!*\n${DIV}\n\n` +
+  `*الباقة:* ${pkg.name}\n` +
+  `*صالح حتى:* ${svc.formatDate(expiresAt)}\n\n` +
+  `استمتع بجميع مميزات باقتك 🎉`;
+
 // ─── Alerts & Settings ────────────────────────────────────────────────────────
 
 const alertsHeaderMessage = '🔔 *تنبيهات الاشتراكات*\n\nاختر التنبيهات التي تريد تفعيلها أو إيقافها:';
@@ -423,13 +495,25 @@ const statsDashboardMessage = (stats) => {
     `✅ *مدفوعات ناجحة:* ${stats.successfulPayments}\n` +
     `❌ *مدفوعات مرفوضة:* ${stats.rejectedPayments}\n` +
     `⏳ *مدفوعات قيد الانتظار:* ${stats.pendingPayments}\n` +
-    `🎟 *كوبونات مُستخدمة:* ${stats.couponsUsed}`
+    `🎟 *كوبونات مُستخدمة:* ${stats.couponsUsed}\n` +
+    `🔑 *أكواد تفعيل متاحة:* ${stats.activationCodesAvailable}\n` +
+    `🔑 *أكواد تفعيل مُستخدمة:* ${stats.activationCodesRedeemed}`
   );
 };
 
 // ─── Storefront (subscriber-facing) ───────────────────────────────────────────
 
-const storeMenuMessage = (welcomeMsg) => `💎 *الاشتراكات*\n${DIV}\n\n${welcomeMsg}`;
+const storeMenuMessage = (welcomeMsg, userId, noAdminConfigured) => {
+  let text = `💎 *الاشتراكات*\n${DIV}\n\n${welcomeMsg}`;
+  if (noAdminConfigured) {
+    text +=
+      `\n\n${DIV}\n⚙️ *إعداد أولي مطلوب*\n\n` +
+      `لم يتم تعيين أي مشرف لنظام الاشتراكات بعد، لذا يراك الجميع (بمن فيهم أنت) كمشترك عادي فقط.\n\n` +
+      `معرّفك في تيليجرام: \`${userId}\`\n\n` +
+      `أضف هذا الرقم إلى المتغير \`ADMIN_IDS\` في إعدادات المشروع (ملف .env أو Environment Variables في Railway) ثم أعد تشغيل البوت لتصبح مشرفًا وتظهر لك لوحة التحكم الكاملة.`;
+  }
+  return text;
+};
 
 const storeNoSubscriptionMessage = '💼 *اشتراكي الحالي*\n\nلا يوجد لديك اشتراك نشط حاليًا.\n\nتصفّح الباقات المتاحة للاشتراك.';
 
@@ -629,6 +713,24 @@ module.exports = {
   ofrToggledMessage,
   ofrConfirmDeleteMessage,
   ofrDeletedMessage,
+  // activation codes
+  codeWizardPackageMessage,
+  codeWizardQuantityMessage,
+  codeWizardQuantityInvalidMessage,
+  codeWizardExpiryMessage,
+  codeWizardDateInputMessage,
+  codeWizardDateInvalidMessage,
+  codeBatchGeneratedMessage,
+  codeNoCodesMessage,
+  codeListHeaderMessage,
+  codeDetailMessage,
+  codeToggledMessage,
+  codeConfirmDeleteMessage,
+  codeDeletedMessage,
+  CODE_FILTER_LABELS,
+  storeRedeemPromptMessage,
+  storeRedeemInvalidMessage,
+  storeRedeemSuccessMessage,
   // alerts & settings
   alertsHeaderMessage,
   settingsHeaderMessage,

@@ -44,6 +44,7 @@ const subAdminMenuKeyboard = () =>
     [Markup.button.callback('💳 إدارة المدفوعات', 'sub_pay_list')],
     [Markup.button.callback('🎟 إنشاء كوبون خصم', 'sub_cpn_add')],
     [Markup.button.callback('🎁 العروض والباقات الخاصة', 'sub_ofr_list')],
+    [Markup.button.callback('🔑 أكواد التفعيل', 'sub_code_list')],
     [Markup.button.callback('🔔 تنبيهات الاشتراكات', 'sub_alerts')],
     [Markup.button.callback('📊 الإحصائيات', 'sub_stats')],
     [Markup.button.callback('📜 سجل العمليات', 'sub_log')],
@@ -403,6 +404,57 @@ const ofrDetailKeyboard = (offer) =>
 
 const ofrConfirmDeleteKeyboard = (id) => yesNoRow(`sub_ofr_delyes_${id}`, `sub_ofr_view_${id}`, '✅ نعم، احذف', '❌ إلغاء');
 
+// ─── Activation Codes (أكواد التفعيل) ─────────────────────────────────────────
+
+const codePackageKeyboard = (packages) => {
+  const rows = packages.map((p) => [Markup.button.callback(`${p.name} — ${p.price} ${p.currency}`, `sub_codew_pkg_${p.id}`)]);
+  rows.push([Markup.button.callback('❌ إلغاء', 'sub_cancel')]);
+  return Markup.inlineKeyboard(rows);
+};
+
+const codeExpiryKeyboard = () =>
+  Markup.inlineKeyboard([
+    [Markup.button.callback('♾ بدون تاريخ انتهاء', 'sub_codew_nodate')],
+    [Markup.button.callback('✏️ تحديد تاريخ', 'sub_codew_setdate')],
+    [Markup.button.callback('❌ إلغاء', 'sub_cancel')],
+  ]);
+
+const CODE_FILTERS = [['الكل', 'all'], ['غير مستخدمة', 'unused'], ['مستخدمة', 'used'], ['منتهية', 'expired']];
+
+const codeListKeyboard = (codes, page, totalPages, currentFilter = 'all') => {
+  const rows = [];
+  rows.push(CODE_FILTERS.map(([label, val]) => Markup.button.callback(val === currentFilter ? `• ${label}` : label, `sub_code_filter_${val}`)));
+
+  const icon = (c) => {
+    if (c.used_count >= c.max_uses) return '✅';
+    if (c.expires_at && new Date(c.expires_at).getTime() < Date.now()) return '⌛️';
+    return '🔑';
+  };
+  codes.forEach((c) => {
+    rows.push([Markup.button.callback(`${icon(c)} ${c.code}`, `sub_code_view_${c.id}`)]);
+  });
+
+  rows.push(...paginationRow('sub_code_page', page, totalPages));
+  rows.push([Markup.button.callback('🔑 توليد أكواد جديدة', 'sub_code_add')]);
+  rows.push([Markup.button.callback('⬅️ رجوع', 'sub_menu')]);
+  return Markup.inlineKeyboard(rows);
+};
+
+const codeDetailKeyboard = (code) =>
+  Markup.inlineKeyboard([
+    [Markup.button.callback(code.is_active ? '⏸ تعطيل' : '▶️ تفعيل', `sub_code_toggle_${code.id}`)],
+    [Markup.button.callback('🗑 حذف', `sub_code_del_${code.id}`)],
+    [Markup.button.callback('⬅️ رجوع للقائمة', 'sub_code_list')],
+  ]);
+
+const codeConfirmDeleteKeyboard = (id) => yesNoRow(`sub_code_delyes_${id}`, `sub_code_view_${id}`, '✅ نعم، احذف', '❌ إلغاء');
+
+const codeBatchDoneKeyboard = () =>
+  Markup.inlineKeyboard([
+    [Markup.button.callback('📋 عرض كل الأكواد', 'sub_code_list')],
+    [Markup.button.callback('⬅️ رجوع', 'sub_menu')],
+  ]);
+
 // ─── Alerts (quick toggle screen) ─────────────────────────────────────────────
 
 const alertsKeyboard = (settings) => {
@@ -472,6 +524,7 @@ const subStoreMenuKeyboard = () =>
   Markup.inlineKeyboard([
     [Markup.button.callback('💼 اشتراكي الحالي', 'sub_store_mysub')],
     [Markup.button.callback('📦 الباقات المتاحة', 'sub_store_packages')],
+    [Markup.button.callback('🔑 لدي كود تفعيل', 'sub_store_redeem')],
     [Markup.button.callback('🎁 العروض الحالية', 'sub_store_offers')],
     [Markup.button.callback('📜 سجل اشتراكي ومدفوعاتي', 'sub_store_history')],
     [Markup.button.callback('⬅️ رجوع', 'main_menu')],
@@ -554,6 +607,13 @@ module.exports = {
   ofrListKeyboard,
   ofrDetailKeyboard,
   ofrConfirmDeleteKeyboard,
+  // activation codes
+  codePackageKeyboard,
+  codeExpiryKeyboard,
+  codeListKeyboard,
+  codeDetailKeyboard,
+  codeConfirmDeleteKeyboard,
+  codeBatchDoneKeyboard,
   // alerts & settings
   alertsKeyboard,
   settingsKeyboard,
