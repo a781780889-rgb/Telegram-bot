@@ -4,6 +4,7 @@ const linksWizardState = require('../services/linksWizardState');
 const subscriptionsWizardState = require('../services/subscriptionsWizardState');
 const joinWizardState = require('../services/joinWizardState');
 const foldersWizardState = require('../services/foldersWizardState');
+const publishWizardState = require('../services/publishWizardState');
 const {
   handlePhoneInput,
   handleOtpInput,
@@ -13,6 +14,7 @@ const { handleLinksTextInput } = require('../handlers/linksMenu');
 const { handleSubscriptionsTextInput } = require('../handlers/subscriptionsMenu');
 const { handleJoinTextInput } = require('../handlers/joinMenu');
 const { handleFoldersTextInput } = require('../handlers/foldersMenu');
+const { handlePublishTextInput } = require('../handlers/publishMenu');
 const { mainMenuKeyboard } = require('../utils/keyboards');
 const logger = require('../utils/logger');
 
@@ -63,6 +65,12 @@ const textRouter = async (ctx, next) => {
   // ─── Folders wizard takes priority when user is in a text-input step ───────
   if (foldersWizardState.isAwaitingTextInput(userId)) {
     await handleFoldersTextInput(ctx);
+    return;
+  }
+
+  // ─── Publish engine wizard takes priority when user is in a text-input step ──
+  if (publishWizardState.isAwaitingTextInput(userId)) {
+    await handlePublishTextInput(ctx);
     return;
   }
 
