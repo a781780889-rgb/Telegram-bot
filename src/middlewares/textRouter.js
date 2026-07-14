@@ -2,6 +2,7 @@ const sessionState = require('../services/sessionState');
 const { STATES } = require('../services/sessionState');
 const linksWizardState = require('../services/linksWizardState');
 const subscriptionsWizardState = require('../services/subscriptionsWizardState');
+const joinWizardState = require('../services/joinWizardState');
 const {
   handlePhoneInput,
   handleOtpInput,
@@ -9,6 +10,7 @@ const {
 } = require('../handlers/addAccount');
 const { handleLinksTextInput } = require('../handlers/linksMenu');
 const { handleSubscriptionsTextInput } = require('../handlers/subscriptionsMenu');
+const { handleJoinTextInput } = require('../handlers/joinMenu');
 const { mainMenuKeyboard } = require('../utils/keyboards');
 const logger = require('../utils/logger');
 
@@ -48,6 +50,12 @@ const textRouter = async (ctx, next) => {
   if (subscriptionsWizardState.isAwaitingTextInput(userId)) {
     const handled = await handleSubscriptionsTextInput(ctx);
     if (handled) return;
+  }
+
+  // ─── Join-to-links wizard takes priority when user is in a text-input step ──
+  if (joinWizardState.isAwaitingTextInput(userId)) {
+    await handleJoinTextInput(ctx);
+    return;
   }
 
   switch (state) {
