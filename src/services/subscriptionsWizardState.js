@@ -67,6 +67,12 @@ const STEPS = {
   OFR_END_DATE: 'OFR_END_DATE',           // button step: no end date vs pick a date
   OFR_END_DATE_DATE: 'OFR_END_DATE_DATE', // text step: the actual date, after "pick a date"
 
+  // ── Activation codes generation wizard (أكواد التفعيل) ──
+  CODE_PACKAGE: 'CODE_PACKAGE',           // button step: which package the codes unlock
+  CODE_QUANTITY: 'CODE_QUANTITY',         // text step: how many codes to generate
+  CODE_EXPIRY: 'CODE_EXPIRY',             // button step: no expiry vs pick a date
+  CODE_EXPIRY_DATE: 'CODE_EXPIRY_DATE',   // text step: the actual date, after "pick a date"
+
   // ── Settings text edits ──
   SET_TAX: 'SET_TAX',
   SET_MESSAGE_EDIT: 'SET_MESSAGE_EDIT',
@@ -74,6 +80,7 @@ const STEPS = {
   // ── Subscriber-facing storefront / subscribe flow ──
   STORE_COUPON_CODE: 'STORE_COUPON_CODE',
   STORE_REVIEW: 'STORE_REVIEW', // button step: final "confirm order" tap
+  STORE_REDEEM_CODE: 'STORE_REDEEM_CODE', // text step: entering an activation code to redeem
 };
 
 // Steps that expect the next text message from the user.
@@ -85,8 +92,9 @@ const TEXT_INPUT_STEPS = new Set([
   STEPS.PAY_REJECT_REASON, STEPS.PAY_SEARCH,
   STEPS.CPN_CODE, STEPS.CPN_NAME, STEPS.CPN_VALUE, STEPS.CPN_MAX_USES, STEPS.CPN_VALID_UNTIL_DATE,
   STEPS.OFR_TITLE, STEPS.OFR_DESCRIPTION, STEPS.OFR_VALUE, STEPS.OFR_END_DATE_DATE,
+  STEPS.CODE_QUANTITY, STEPS.CODE_EXPIRY_DATE,
   STEPS.SET_TAX, STEPS.SET_MESSAGE_EDIT,
-  STEPS.STORE_COUPON_CODE,
+  STEPS.STORE_COUPON_CODE, STEPS.STORE_REDEEM_CODE,
 ]);
 
 /**

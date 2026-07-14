@@ -13,6 +13,7 @@ const {
   subscriberHistoryQueries,
   couponQueries,
   offerQueries,
+  activationCodeQueries,
   operationsLogQueries,
   settingsQueries,
 } = require('../database/subscriptionsDb');
@@ -225,6 +226,26 @@ const validateAndApplyCoupon = (code, { userId, packageId, price }) => {
   return { valid: true, coupon, discountAmount: Math.round(discountAmount * 100) / 100, finalPrice };
 };
 
+/**
+ * Validate an activation code for redemption. Never throws.
+ * @param {string} code
+ * @returns {{ valid: boolean, reason?: string, codeRow?: object }}
+ */
+const validateActivationCode = (code) => {
+  const codeRow = activationCodeQueries.getByCode((code || '').trim());
+
+  if (!codeRow) return { valid: false, reason: 'كود التفعيل غير صحيح أو غير موجود.' };
+  if (!codeRow.is_active) return { valid: false, reason: 'كود التفعيل غير مُفعّل حاليًا.' };
+  if (codeRow.expires_at && Date.now() > new Date(codeRow.expires_at).getTime()) {
+    return { valid: false, reason: 'انتهت صلاحية كود التفعيل.' };
+  }
+  if (codeRow.used_count >= codeRow.max_uses) {
+    return { valid: false, reason: 'تم استخدام كود التفعيل بالكامل.' };
+  }
+
+  return { valid: true, codeRow };
+};
+
 // ─── Notifications ────────────────────────────────────────────────────────────
 
 /**
@@ -373,6 +394,7 @@ module.exports = {
   getActiveDiscountOffer,
   applyOfferToPrice,
   validateAndApplyCoupon,
+  validateActivationCode,
   notifyAdmins,
   notifySubscriber,
   startSubscriptionScheduler,
