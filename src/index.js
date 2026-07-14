@@ -68,6 +68,23 @@ const {
   handleLinksConfirmClean,
 } = require('./handlers/linksMenu');
 
+const {
+  handleJoinMenu,
+  handleJoinAccountsMenu,
+  handleJoinAccountDetail,
+  handleJoinAccountEnable,
+  handleJoinAccountDisable,
+  handleJoinAddLinks,
+  handleJoinStart,
+  handleJoinStartConfirm,
+  handleJoinStop,
+  handleJoinStatistics,
+  handleJoinBannedAccounts,
+  handleJoinLogs,
+  handleJoinSettings,
+  handleJoinEditSetting,
+} = require('./handlers/joinMenu');
+
 const { restoreAllAccounts } = require('./services/sessionRestoreService');
 
 const subscriptionsMenu = require('./handlers/subscriptionsMenu');
@@ -223,6 +240,42 @@ bot.action(/^links_op_export_(\d+)$/, async (ctx) => {
 
 bot.action(/^links_toggle_setting_(.+)$/, async (ctx) => {
   await handleLinksToggleSetting(ctx, ctx.match[1]);
+});
+
+// ─── Join-to-Links Callbacks ───────────────────────────────────────────────────
+
+bot.action('join_menu', handleJoinMenu);
+bot.action('join_accounts_menu', handleJoinAccountsMenu);
+bot.action('join_add_links', handleJoinAddLinks);
+bot.action('join_start', handleJoinStart);
+bot.action('join_start_confirm', handleJoinStartConfirm);
+bot.action('join_stop', handleJoinStop);
+bot.action('join_statistics', handleJoinStatistics);
+bot.action('join_banned_accounts', handleJoinBannedAccounts);
+bot.action('join_logs', handleJoinLogs);
+bot.action('join_settings', handleJoinSettings);
+
+bot.action(/^join_account_detail_(\d+)$/, async (ctx) => {
+  await handleJoinAccountDetail(ctx, parseInt(ctx.match[1], 10));
+});
+bot.action(/^join_account_enable_(\d+)$/, async (ctx) => {
+  await handleJoinAccountEnable(ctx, parseInt(ctx.match[1], 10));
+});
+bot.action(/^join_account_disable_(\d+)$/, async (ctx) => {
+  await handleJoinAccountDisable(ctx, parseInt(ctx.match[1], 10));
+});
+
+bot.action('join_edit_batch_size', async (ctx) => {
+  await handleJoinEditSetting(ctx, 'batch_size');
+});
+bot.action('join_edit_join_delay', async (ctx) => {
+  await handleJoinEditSetting(ctx, 'join_delay_seconds');
+});
+bot.action('join_edit_rest_seconds', async (ctx) => {
+  await handleJoinEditSetting(ctx, 'rest_seconds');
+});
+bot.action('join_edit_max_joins', async (ctx) => {
+  await handleJoinEditSetting(ctx, 'max_joins_per_account');
 });
 
 // ─── Add Account Callbacks ────────────────────────────────────────────────────
