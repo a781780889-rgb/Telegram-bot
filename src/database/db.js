@@ -150,6 +150,14 @@ const initializeSchema = () => {
   } catch (error) {
     logger.error('Failed to initialize join-to-links schema:', error);
   }
+
+  // Lazy-import publishDb
+  try {
+    const { initPublishSchema } = require('./publishDb');
+    initPublishSchema();
+  } catch (error) {
+    logger.error('Failed to initialize publishing engine schema:', error);
+  }
 };
 
 // ─── Account Queries ──────────────────────────────────────────────────────────
