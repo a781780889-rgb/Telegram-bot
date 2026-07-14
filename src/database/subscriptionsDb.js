@@ -2,15 +2,17 @@
  * Subscriptions Database Module
  *
  * Provides the schema and all queries for the 💎 نظام الاشتراكات feature:
- *   - sub_packages          : subscription packages (باقات)
- *   - sub_subscribers       : current subscription state per bot user
- *   - sub_subscriber_history: full audit trail per subscriber
- *   - sub_payments          : every payment attempt (pending/accepted/rejected/refunded)
- *   - sub_coupons           : discount coupons
- *   - sub_coupon_uses       : one row per successful coupon redemption
- *   - sub_offers            : seasonal/limited offers
- *   - sub_operations_log    : full admin/system operations audit log
- *   - sub_settings          : key/value store for module-wide settings
+ *   - sub_packages           : subscription packages (باقات)
+ *   - sub_subscribers        : current subscription state per bot user
+ *   - sub_subscriber_history : full audit trail per subscriber
+ *   - sub_payments           : every payment attempt (pending/accepted/rejected/refunded)
+ *   - sub_coupons            : discount coupons
+ *   - sub_coupon_uses        : one row per successful coupon redemption
+ *   - sub_offers             : seasonal/limited offers
+ *   - sub_activation_codes   : self-service activation/redemption codes (أكواد التفعيل)
+ *   - sub_activation_code_uses : one row per successful code redemption
+ *   - sub_operations_log     : full admin/system operations audit log
+ *   - sub_settings           : key/value store for module-wide settings
  *
  * Shares the SQLite file that db.js owns; imported lazily from db.js
  * during initializeSchema() to avoid a circular-require issue (exact same
@@ -155,6 +157,30 @@ const initSubscriptionsSchema = () => {
       FOREIGN KEY (package_id) REFERENCES sub_packages(id) ON DELETE SET NULL
     );
 
+    CREATE TABLE IF NOT EXISTS sub_activation_codes (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      code          TEXT    NOT NULL UNIQUE,
+      package_id    INTEGER NOT NULL,
+      batch_label   TEXT,
+      max_uses      INTEGER NOT NULL DEFAULT 1,
+      used_count    INTEGER NOT NULL DEFAULT 0,
+      expires_at    DATETIME,
+      is_active     INTEGER NOT NULL DEFAULT 1,
+      is_deleted    INTEGER NOT NULL DEFAULT 0,
+      created_by    TEXT,
+      created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (package_id) REFERENCES sub_packages(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS sub_activation_code_uses (
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      code_id           INTEGER NOT NULL,
+      telegram_user_id  TEXT    NOT NULL,
+      payment_id        INTEGER,
+      used_at           DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (code_id) REFERENCES sub_activation_codes(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS sub_operations_log (
       id            INTEGER PRIMARY KEY AUTOINCREMENT,
       action_type   TEXT    NOT NULL,
@@ -184,6 +210,9 @@ const initSubscriptionsSchema = () => {
     CREATE INDEX IF NOT EXISTS idx_sub_coupons_code          ON sub_coupons(code);
     CREATE INDEX IF NOT EXISTS idx_sub_coupon_uses_coupon    ON sub_coupon_uses(coupon_id);
     CREATE INDEX IF NOT EXISTS idx_sub_offers_active         ON sub_offers(is_deleted, is_active);
+    CREATE INDEX IF NOT EXISTS idx_sub_act_codes_code         ON sub_activation_codes(code);
+    CREATE INDEX IF NOT EXISTS idx_sub_act_codes_pkg          ON sub_activation_codes(package_id, is_deleted);
+    CREATE INDEX IF NOT EXISTS idx_sub_act_code_uses_code     ON sub_activation_code_uses(code_id);
     CREATE INDEX IF NOT EXISTS idx_sub_ops_log_created        ON sub_operations_log(created_at);
   `);
 
@@ -224,6 +253,9 @@ const generateCode = (length = 8) => {
 };
 
 const generatePaymentReference = () => `PAY-${generateCode(6)}`;
+
+/** Distinct "license key" look (e.g. A7K9-XM3P-QR2T) so it reads differently from coupon codes. */
+const generateActivationCode = () => `${generateCode(4)}-${generateCode(4)}-${generateCode(4)}`;
 
 const _parsePackageRow = (row) => {
   if (!row) return null;
@@ -846,6 +878,107 @@ const offerQueries = {
   },
 };
 
+// ─── Activation Code Queries (أكواد التفعيل) ──────────────────────────────────
+
+const activationCodeQueries = {
+  /**
+   * Generate a batch of unique single-purpose codes for one package.
+   * @param {object} opts { packageId, quantity, maxUses, expiresAt, batchLabel, createdBy }
+   * @returns {string[]} the generated codes
+   */
+  generateBatch: ({ packageId, quantity, maxUses = 1, expiresAt = null, batchLabel = null, createdBy = null }) => {
+    const db = getDb();
+    const insert = db.prepare(`
+      INSERT INTO sub_activation_codes (code, package_id, batch_label, max_uses, expires_at, created_by)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    const codes = [];
+    const txn = db.transaction(() => {
+      for (let i = 0; i < quantity; i++) {
+        let code = generateActivationCode();
+        // Practically never collides given the alphabet/length, but guard anyway.
+        while (db.prepare('SELECT 1 FROM sub_activation_codes WHERE code = ?').get(code)) {
+          code = generateActivationCode();
+        }
+        insert.run(code, packageId, batchLabel, maxUses, expiresAt, createdBy);
+        codes.push(code);
+      }
+    });
+    txn();
+    return codes;
+  },
+
+  getById: (id) => getDb().prepare('SELECT * FROM sub_activation_codes WHERE id = ?').get(id) || null,
+
+  getByCode: (code) =>
+    getDb()
+      .prepare('SELECT * FROM sub_activation_codes WHERE UPPER(code) = UPPER(?) AND is_deleted = 0')
+      .get((code || '').trim()) || null,
+
+  /**
+   * Paginated list, optionally filtered by package and/or status.
+   * status: 'all' | 'unused' | 'used' | 'expired'
+   */
+  getPage: (opts = {}) => {
+    const { packageId = null, status = 'all', page = 1, pageSize = 8 } = opts;
+    const db = getDb();
+    const clauses = ['is_deleted = 0'];
+    const params = [];
+
+    if (packageId) {
+      clauses.push('package_id = ?');
+      params.push(packageId);
+    }
+    if (status === 'unused') clauses.push('used_count < max_uses', "(expires_at IS NULL OR datetime(expires_at) > datetime('now'))");
+    if (status === 'used') clauses.push('used_count >= max_uses');
+    if (status === 'expired') clauses.push("expires_at IS NOT NULL AND datetime(expires_at) <= datetime('now')", 'used_count < max_uses');
+
+    const where = `WHERE ${clauses.join(' AND ')}`;
+    const total = db.prepare(`SELECT COUNT(*) c FROM sub_activation_codes ${where}`).get(...params).c;
+    const rows = db
+      .prepare(`SELECT * FROM sub_activation_codes ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`)
+      .all(...params, pageSize, (page - 1) * pageSize);
+
+    return { rows, total, page, pageSize, totalPages: Math.max(1, Math.ceil(total / pageSize)) };
+  },
+
+  toggleActive: (id) => {
+    getDb()
+      .prepare('UPDATE sub_activation_codes SET is_active = CASE WHEN is_active = 1 THEN 0 ELSE 1 END WHERE id = ?')
+      .run(id);
+  },
+
+  softDelete: (id) => {
+    getDb().prepare('UPDATE sub_activation_codes SET is_deleted = 1, is_active = 0 WHERE id = ?').run(id);
+  },
+
+  incrementUse: (id) => {
+    getDb().prepare('UPDATE sub_activation_codes SET used_count = used_count + 1 WHERE id = ?').run(id);
+  },
+
+  countActiveUnused: () =>
+    getDb()
+      .prepare(`
+        SELECT COUNT(*) c FROM sub_activation_codes
+        WHERE is_deleted = 0 AND is_active = 1 AND used_count < max_uses
+          AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))
+      `)
+      .get().c,
+
+  countTotalRedeemed: () => getDb().prepare('SELECT COALESCE(SUM(used_count), 0) c FROM sub_activation_codes').get().c,
+};
+
+const activationCodeUseQueries = {
+  add: (codeId, telegramUserId, paymentId = null) => {
+    getDb()
+      .prepare('INSERT INTO sub_activation_code_uses (code_id, telegram_user_id, payment_id) VALUES (?, ?, ?)')
+      .run(codeId, String(telegramUserId), paymentId);
+  },
+
+  getByCode: (codeId) =>
+    getDb().prepare('SELECT * FROM sub_activation_code_uses WHERE code_id = ? ORDER BY used_at DESC').all(codeId),
+};
+
 // ─── Operations Log Queries ───────────────────────────────────────────────────
 
 const operationsLogQueries = {
@@ -958,6 +1091,8 @@ const statsQueries = {
       rejectedPayments: payStatus.rejected,
       pendingPayments: payStatus.pending,
       couponsUsed: couponQueries.countTotalUses(),
+      activationCodesAvailable: activationCodeQueries.countActiveUnused(),
+      activationCodesRedeemed: activationCodeQueries.countTotalRedeemed(),
       renewalRate:
         byStatus.active + byStatus.expired > 0
           ? Math.round((subscriberHistoryQueries.countRenewals() / (byStatus.active + byStatus.expired)) * 100)
@@ -969,6 +1104,7 @@ const statsQueries = {
 module.exports = {
   initSubscriptionsSchema,
   generateCode,
+  generateActivationCode,
   nowIso,
   packageQueries,
   subscriberQueries,
@@ -977,6 +1113,8 @@ module.exports = {
   couponQueries,
   couponUseQueries,
   offerQueries,
+  activationCodeQueries,
+  activationCodeUseQueries,
   operationsLogQueries,
   settingsQueries,
   statsQueries,
