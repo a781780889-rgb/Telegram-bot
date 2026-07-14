@@ -7,6 +7,7 @@ const { Markup } = require('telegraf');
  */
 const mainMenuKeyboard = () =>
   Markup.inlineKeyboard([
+    [Markup.button.callback('🚀 محرك النشر', 'publish_menu')],
     [Markup.button.callback('📂 الحسابات', 'accounts_menu')],
     [Markup.button.callback('🔗 الروابط', 'links_menu')],
     [Markup.button.callback('🔗 الانضمام للروابط', 'join_menu')],
