@@ -87,6 +87,19 @@ const {
   isAwaitingLinksFile,
 } = require('./handlers/joinMenu');
 
+const {
+  handleFoldersMenu,
+  handleFoldersStats,
+  handleFoldersOrganize,
+  handleFoldersList,
+  handleFolderDetail,
+  handleFolderPush,
+  handleFolderDeleteConfirm,
+  handleFolderDeleteYes,
+  handleFoldersSettings,
+  handleFoldersEditGroupsPerFolder,
+} = require('./handlers/foldersMenu');
+
 const { restoreAllAccounts } = require('./services/sessionRestoreService');
 
 const subscriptionsMenu = require('./handlers/subscriptionsMenu');
@@ -278,6 +291,28 @@ bot.action('join_edit_rest_seconds', async (ctx) => {
 });
 bot.action('join_edit_max_joins', async (ctx) => {
   await handleJoinEditSetting(ctx, 'max_joins_per_account');
+});
+
+// ─── Central Groups DB + Telegram Folders Callbacks ───────────────────────────
+
+bot.action('folders_menu', handleFoldersMenu);
+bot.action('folders_stats', handleFoldersStats);
+bot.action('folders_organize', handleFoldersOrganize);
+bot.action('folders_list', handleFoldersList);
+bot.action('folders_settings', handleFoldersSettings);
+bot.action('folders_edit_groups_per_folder', handleFoldersEditGroupsPerFolder);
+
+bot.action(/^folder_detail_(\d+)$/, async (ctx) => {
+  await handleFolderDetail(ctx, parseInt(ctx.match[1], 10));
+});
+bot.action(/^folder_push_(\d+)$/, async (ctx) => {
+  await handleFolderPush(ctx, parseInt(ctx.match[1], 10));
+});
+bot.action(/^folder_delete_confirm_(\d+)$/, async (ctx) => {
+  await handleFolderDeleteConfirm(ctx, parseInt(ctx.match[1], 10));
+});
+bot.action(/^folder_delete_yes_(\d+)$/, async (ctx) => {
+  await handleFolderDeleteYes(ctx, parseInt(ctx.match[1], 10));
 });
 
 // ─── Add Account Callbacks ────────────────────────────────────────────────────
