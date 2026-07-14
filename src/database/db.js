@@ -142,6 +142,14 @@ const initializeSchema = () => {
   } catch (error) {
     logger.error('Failed to initialize subscriptions schema:', error);
   }
+
+  // Lazy-import joinDb to avoid circular dependency (same pattern as linksDb above)
+  try {
+    const { initJoinSchema } = require('./joinDb');
+    initJoinSchema();
+  } catch (error) {
+    logger.error('Failed to initialize join-to-links schema:', error);
+  }
 };
 
 // ─── Account Queries ──────────────────────────────────────────────────────────
