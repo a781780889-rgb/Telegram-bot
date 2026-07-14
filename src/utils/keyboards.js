@@ -9,6 +9,7 @@ const mainMenuKeyboard = () =>
   Markup.inlineKeyboard([
     [Markup.button.callback('📂 الحسابات', 'accounts_menu')],
     [Markup.button.callback('🔗 الروابط', 'links_menu')],
+    [Markup.button.callback('🔗 الانضمام للروابط', 'join_menu')],
     [Markup.button.callback('💎 الاشتراكات', 'sub_menu')],
     [Markup.button.callback('ℹ️ المساعدة', 'help')],
   ]);
