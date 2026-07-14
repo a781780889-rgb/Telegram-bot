@@ -40,7 +40,9 @@ const joinAccountDetailMessage = (acc) => {
 const joinAddLinksPromptMessage =
   `🔗 *إضافة روابط للانضمام*\n` +
   `${'─'.repeat(25)}\n\n` +
-  `أرسل روابط المجموعات المراد الانضمام إليها (رابط في كل سطر).\n\n` +
+  `يمكنك إضافة الروابط بطريقتين:\n\n` +
+  `1️⃣ أرسل الروابط مباشرة كنص (رابط في كل سطر).\n` +
+  `2️⃣ أرسل ملف نصي \`.txt\` يحتوي على الروابط (رابط في كل سطر).\n\n` +
   `يدعم روابط:\n` +
   `• العامة: \`t.me/username\`\n` +
   `• الدعوة الخاصة: \`t.me/joinchat/xxxx\` أو \`t.me/+xxxx\``;
@@ -56,6 +58,20 @@ const joinAddLinksResultMessage = (addedCount, invalidCount, alreadyQueuedSkippe
   if (alreadyQueuedSkipped) lines.push(`روابط مكررة داخل النص نفسه تم تجاهلها: ${alreadyQueuedSkipped}`);
   return lines.join('\n');
 };
+
+const joinFileWrongTypeMessage =
+  `⚠️ *نوع الملف غير مدعوم*\n\n` +
+  `يجب أن يكون الملف نصيًا بصيغة \`.txt\` فقط.`;
+
+const joinFileTooLargeMessage =
+  `⚠️ *حجم الملف كبير جدًا*\n\n` +
+  `الحد الأقصى المسموح به هو 2 ميجابايت.`;
+
+const joinFileEmptyMessage =
+  `⚠️ *الملف لا يحتوي على أي روابط صالحة.*`;
+
+const joinFileReadErrorMessage =
+  `⚠️ *تعذر قراءة الملف.* تأكد من أنه ملف نصي سليم وحاول مرة أخرى.`;
 
 // ─── Start / Stop ─────────────────────────────────────────────────────────────
 
@@ -169,6 +185,10 @@ module.exports = {
   joinAccountDetailMessage,
   joinAddLinksPromptMessage,
   joinAddLinksResultMessage,
+  joinFileWrongTypeMessage,
+  joinFileTooLargeMessage,
+  joinFileEmptyMessage,
+  joinFileReadErrorMessage,
   joinStartConfirmMessage,
   joinNoPendingLinksMessage,
   joinNoAvailableAccountsMessage,
