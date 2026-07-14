@@ -93,6 +93,7 @@ const {
   paymentsHandler,
   couponsHandler,
   offersHandler,
+  activationCodesHandler,
   storefrontHandler,
 } = subscriptionsMenu;
 
@@ -291,6 +292,8 @@ bot.action('sub_cpn_add', requireAdmin(couponsHandler.handleCouponAddStart));
 bot.action('sub_cpn_list', requireAdmin(couponsHandler.handleCouponsList));
 bot.action('sub_ofr_list', requireAdmin(offersHandler.handleOffersList));
 bot.action('sub_ofr_add', requireAdmin(offersHandler.handleOfferAddStart));
+bot.action('sub_code_list', requireAdmin(activationCodesHandler.handleCodesList));
+bot.action('sub_code_add', requireAdmin(activationCodesHandler.handleCodeAddStart));
 bot.action('sub_alerts', requireAdmin(handleSubscriptionsAlerts));
 bot.action('sub_stats', requireAdmin(handleSubscriptionsStats));
 bot.action('sub_log', requireAdmin(handleSubscriptionsLog));
@@ -378,6 +381,20 @@ bot.action(/^sub_ofrw_pkg_(\d+|all)$/, requireAdmin(offersHandler.handleOfrPacka
 bot.action('sub_ofrw_nodate', requireAdmin(offersHandler.handleOfrNoDate));
 bot.action('sub_ofrw_setdate', requireAdmin(offersHandler.handleOfrSetDateStart));
 
+// ─── Activation Codes (🔑 أكواد التفعيل) ──────────────────────────────────────
+
+bot.action(/^sub_code_page_(\d+)$/, requireAdmin(activationCodesHandler.handleCodesPage));
+bot.action(/^sub_code_filter_(\w+)$/, requireAdmin(activationCodesHandler.handleCodesFilter));
+bot.action(/^sub_code_view_(\d+)$/, requireAdmin(async (ctx) => {
+  await activationCodesHandler.handleCodeView(ctx, parseInt(ctx.match[1], 10));
+}));
+bot.action(/^sub_code_(toggle|del|delyes)_(\d+)$/, requireAdmin(activationCodesHandler.handleCodeAction));
+
+// Generate-codes wizard
+bot.action(/^sub_codew_pkg_(\d+)$/, requireAdmin(activationCodesHandler.handleCodePackagePick));
+bot.action('sub_codew_nodate', requireAdmin(activationCodesHandler.handleCodeNoExpiry));
+bot.action('sub_codew_setdate', requireAdmin(activationCodesHandler.handleCodeSetExpiryStart));
+
 // ─── Alerts (quick toggles) ───────────────────────────────────────────────────
 
 bot.action(/^sub_alerts_toggle_(\w+)$/, requireAdmin(handleAlertsToggle));
@@ -398,6 +415,7 @@ bot.action(/^sub_log_page_(\d+)$/, requireAdmin(handleSubscriptionsLogPage));
 
 bot.action('sub_store_mysub', storefrontHandler.handleStoreMySubscription);
 bot.action('sub_store_packages', storefrontHandler.handleStorePackages);
+bot.action('sub_store_redeem', storefrontHandler.handleStoreRedeemStart);
 bot.action(/^sub_store_pkg_(\d+)$/, async (ctx) => {
   await storefrontHandler.handleStorePackageView(ctx, parseInt(ctx.match[1], 10));
 });
