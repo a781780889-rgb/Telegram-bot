@@ -14,6 +14,7 @@ const {
   couponQueries,
   offerQueries,
   activationCodeQueries,
+  activationCodeUseQueries,
   operationsLogQueries,
   settingsQueries,
 } = require('../database/subscriptionsDb');
@@ -228,13 +229,16 @@ const validateAndApplyCoupon = (code, { userId, packageId, price }) => {
 
 /**
  * Validate an activation code for redemption. Never throws.
+ * All checks happen server-side only — nothing here can be bypassed from the client.
  * @param {string} code
+ * @param {string|number} [userId] - when provided, also blocks re-use of the same code by the same user
  * @returns {{ valid: boolean, reason?: string, codeRow?: object }}
  */
-const validateActivationCode = (code) => {
+const validateActivationCode = (code, userId = null) => {
   const codeRow = activationCodeQueries.getByCode((code || '').trim());
 
   if (!codeRow) return { valid: false, reason: 'كود التفعيل غير صحيح أو غير موجود.' };
+  if (codeRow.is_deleted) return { valid: false, reason: 'كود التفعيل غير صحيح أو غير موجود.' };
   if (!codeRow.is_active) return { valid: false, reason: 'كود التفعيل غير مُفعّل حاليًا.' };
   if (codeRow.expires_at && Date.now() > new Date(codeRow.expires_at).getTime()) {
     return { valid: false, reason: 'انتهت صلاحية كود التفعيل.' };
@@ -242,8 +246,25 @@ const validateActivationCode = (code) => {
   if (codeRow.used_count >= codeRow.max_uses) {
     return { valid: false, reason: 'تم استخدام كود التفعيل بالكامل.' };
   }
+  if (userId !== null && activationCodeUseQueries.hasUserUsedCode(codeRow.id, userId)) {
+    return { valid: false, reason: 'لقد استخدمت هذا الكود من قبل. لا يمكن استخدام نفس الكود مرتين.' };
+  }
 
   return { valid: true, codeRow };
+};
+
+/**
+ * Whether a subscriber currently has active, non-expired access. Checks the
+ * expiry timestamp directly (not just the cached `status` column) so a stale
+ * "active" row between scheduler runs never grants access after expiry.
+ * @param {object|null} subscriber - a row from subscriberQueries
+ * @returns {boolean}
+ */
+const isAccessActive = (subscriber) => {
+  if (!subscriber) return false;
+  if (subscriber.status !== 'active') return false;
+  if (!subscriber.expires_at) return true; // no expiry set = lifetime access
+  return new Date(subscriber.expires_at).getTime() > Date.now();
 };
 
 // ─── Notifications ────────────────────────────────────────────────────────────
@@ -380,6 +401,7 @@ module.exports = {
   isAdmin,
   getAdminIds,
   hasAnyAdminConfigured,
+  isAccessActive,
   safeEdit,
   formatMoney,
   formatDuration,
