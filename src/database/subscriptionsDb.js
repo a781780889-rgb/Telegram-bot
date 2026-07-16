@@ -977,6 +977,12 @@ const activationCodeUseQueries = {
 
   getByCode: (codeId) =>
     getDb().prepare('SELECT * FROM sub_activation_code_uses WHERE code_id = ? ORDER BY used_at DESC').all(codeId),
+
+  /** Has this specific telegram user already redeemed this specific code? Prevents re-use by the same user. */
+  hasUserUsedCode: (codeId, telegramUserId) =>
+    !!getDb()
+      .prepare('SELECT 1 FROM sub_activation_code_uses WHERE code_id = ? AND telegram_user_id = ? LIMIT 1')
+      .get(codeId, String(telegramUserId)),
 };
 
 // ─── Operations Log Queries ───────────────────────────────────────────────────
