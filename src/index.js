@@ -170,6 +170,15 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 
 bot.catch(errorHandler);
 
+// ─── Mandatory Activation Gate ────────────────────────────────────────────────
+// Registered before every command/action/text handler below, so NOTHING in the
+// bot — no command, no button, no free-text message — can run for a user who
+// hasn't redeemed a valid activation code (or whose subscription has expired),
+// except for admins. See src/services/accessGate.js for the full logic.
+
+const { accessGate } = require('./services/accessGate');
+bot.use(accessGate);
+
 // ─── Commands ─────────────────────────────────────────────────────────────────
 
 bot.command('start', handleStart);
