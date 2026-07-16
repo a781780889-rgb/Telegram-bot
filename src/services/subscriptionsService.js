@@ -17,6 +17,7 @@ const {
   activationCodeUseQueries,
   operationsLogQueries,
   settingsQueries,
+  packageQueries,
 } = require('../database/subscriptionsDb');
 
 // ─── Telegram UI helper ───────────────────────────────────────────────────────
@@ -267,6 +268,24 @@ const isAccessActive = (subscriber) => {
   return new Date(subscriber.expires_at).getTime() > Date.now();
 };
 
+/**
+ * Maximum number of Telegram accounts a subscriber is allowed to add, as
+ * granted by the package tied to the activation code they redeemed.
+ * 0 (or missing package) is treated as "no accounts allowed" — NOT unlimited —
+ * so a subscriber without an active, package-linked subscription can never
+ * add accounts by default. Admins are unlimited (checked by the caller via
+ * isAdmin before this is consulted).
+ * @param {object|null} subscriber - a row from subscriberQueries.getByTelegramId
+ * @returns {number}
+ */
+const getMaxAccountsForUser = (subscriber) => {
+  if (!isAccessActive(subscriber)) return 0;
+  if (!subscriber.package_id) return 0;
+  const pkg = packageQueries.getById(subscriber.package_id);
+  if (!pkg) return 0;
+  return Number(pkg.max_accounts) || 0;
+};
+
 // ─── Notifications ────────────────────────────────────────────────────────────
 
 /**
@@ -402,6 +421,7 @@ module.exports = {
   getAdminIds,
   hasAnyAdminConfigured,
   isAccessActive,
+  getMaxAccountsForUser,
   safeEdit,
   formatMoney,
   formatDuration,
