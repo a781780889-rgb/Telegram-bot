@@ -64,6 +64,21 @@ const handleSubscriptionsMenu = async (ctx) => {
 
 const handleSubCancel = async (ctx) => {
   wiz.resetWizard(ctx.from.id);
+
+  // A non-admin user who does not currently have active access must never
+  // land back on the main menu via Cancel — that would defeat the mandatory
+  // activation gate. Send them straight back to the activation screen instead.
+  if (!svc.isAdmin(ctx.from.id)) {
+    const { subscriberQueries } = require('../database/subscriptionsDb');
+    const subscriber = subscriberQueries.getByTelegramId(ctx.from.id);
+    if (!svc.isAccessActive(subscriber)) {
+      if (ctx.callbackQuery) await ctx.answerCbQuery();
+      const { showGateScreen } = require('../services/accessGate');
+      await showGateScreen(ctx);
+      return;
+    }
+  }
+
   await svc.safeEdit(ctx, msg.cancelledMessage, kb.subBackToMenuKeyboard());
   if (ctx.callbackQuery) await ctx.answerCbQuery();
 };

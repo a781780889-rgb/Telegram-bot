@@ -218,7 +218,7 @@ const handleStoreRedeemStart = async (ctx) => {
 
 const redeemActivationCode = async (ctx, rawCode) => {
   const userId = ctx.from.id;
-  const result = svc.validateActivationCode(rawCode);
+  const result = svc.validateActivationCode(rawCode, userId);
 
   if (!result.valid) {
     await ctx.reply(msg.storeRedeemInvalidMessage(result.reason), kb.subCancelKeyboard());
@@ -344,4 +344,5 @@ module.exports = {
   handleStoreOffers,
   handleStoreHistory,
   handleStorefrontTextInput,
+  redeemActivationCode,
 };
