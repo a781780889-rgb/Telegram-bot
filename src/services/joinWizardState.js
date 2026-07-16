@@ -1,7 +1,8 @@
 /**
  * Join-to-Links Wizard State Manager
- * Manages the multi-step "إضافة روابط" wizard state per user, separate
- * from other wizard state maps (same pattern as linksWizardState.js).
+ * Manages the multi-step "إضافة روابط" + settings-editing wizard state per
+ * user, separate from other wizard state maps (same pattern as
+ * linksWizardState.js).
  */
 
 const wizardStates = new Map();
@@ -12,10 +13,32 @@ const WIZARD_STEPS = {
   IDLE: 'IDLE',
   AWAITING_LINKS: 'AWAITING_LINKS',
   AWAITING_BATCH_SIZE: 'AWAITING_BATCH_SIZE',
-  AWAITING_JOIN_DELAY: 'AWAITING_JOIN_DELAY',
-  AWAITING_REST_SECONDS: 'AWAITING_REST_SECONDS',
+  AWAITING_JOIN_DELAY_RANGE: 'AWAITING_JOIN_DELAY_RANGE',
+  AWAITING_REST_RANGE: 'AWAITING_REST_RANGE',
   AWAITING_MAX_JOINS: 'AWAITING_MAX_JOINS',
+  AWAITING_MAX_JOINS_HOUR: 'AWAITING_MAX_JOINS_HOUR',
+  AWAITING_MAX_JOINS_DAY: 'AWAITING_MAX_JOINS_DAY',
+  AWAITING_MAX_JOINS_SESSION: 'AWAITING_MAX_JOINS_SESSION',
+  AWAITING_MAX_RETRIES: 'AWAITING_MAX_RETRIES',
+  AWAITING_RETRY_DELAY: 'AWAITING_RETRY_DELAY',
 };
+
+/** Steps whose value is a single positive integer (plain number prompt). */
+const SINGLE_NUMBER_STEPS = [
+  WIZARD_STEPS.AWAITING_BATCH_SIZE,
+  WIZARD_STEPS.AWAITING_MAX_JOINS,
+  WIZARD_STEPS.AWAITING_MAX_JOINS_HOUR,
+  WIZARD_STEPS.AWAITING_MAX_JOINS_DAY,
+  WIZARD_STEPS.AWAITING_MAX_JOINS_SESSION,
+  WIZARD_STEPS.AWAITING_MAX_RETRIES,
+  WIZARD_STEPS.AWAITING_RETRY_DELAY,
+];
+
+/** Steps whose value is a "min-max" range (e.g. "20-45"). */
+const RANGE_STEPS = [
+  WIZARD_STEPS.AWAITING_JOIN_DELAY_RANGE,
+  WIZARD_STEPS.AWAITING_REST_RANGE,
+];
 
 const getWizardState = (userId) => {
   const state = wizardStates.get(String(userId));
@@ -47,15 +70,15 @@ const isAwaitingTextInput = (userId) => {
   const { step } = getWizardState(userId);
   return [
     WIZARD_STEPS.AWAITING_LINKS,
-    WIZARD_STEPS.AWAITING_BATCH_SIZE,
-    WIZARD_STEPS.AWAITING_JOIN_DELAY,
-    WIZARD_STEPS.AWAITING_REST_SECONDS,
-    WIZARD_STEPS.AWAITING_MAX_JOINS,
+    ...SINGLE_NUMBER_STEPS,
+    ...RANGE_STEPS,
   ].includes(step);
 };
 
 module.exports = {
   WIZARD_STEPS,
+  SINGLE_NUMBER_STEPS,
+  RANGE_STEPS,
   getWizardState,
   setWizardState,
   resetWizard,

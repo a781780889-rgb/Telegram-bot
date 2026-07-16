@@ -13,6 +13,18 @@
  * PERSISTENCE fix: restoreSessionFile() recreates the session file from
  * the encrypted_session stored in the DB when the file is missing (e.g.
  * after a container restart or a fresh deployment).
+ *
+ * LONG-LIVED CONNECTIONS fix: loadSession() defaults to the same
+ * short-lived "forSearch" profile it always has (autoReconnect off, quick
+ * retries) — unchanged for every existing caller. Pass
+ * `{ longLived: true }` to get a profile with autoReconnect ON and more
+ * generous retries, for callers that hold the connection open for a long
+ * time (e.g. the join-to-links engine, which can run for many minutes
+ * with rests/FloodWaits in between). Using the short-lived profile for
+ * those long runs was the root cause of the continuous "Error: TIMEOUT"
+ * spam seen in production: the connection gave up reconnecting after the
+ * first network hiccup and the client's internal update loop then kept
+ * retrying against a dead socket indefinitely.
  */
 
 const { TelegramClient } = require('telegram');
@@ -286,20 +298,26 @@ const restoreSessionFile = (account) => {
 /**
  * Load a saved, encrypted session from disk and return an authenticated client.
  *
- * The returned client is configured for search (forSearch = true).
+ * By default configured for short-lived use (forSearch = true), exactly as
+ * before. Pass `{ longLived: true }` for callers that keep the connection
+ * open for a long time — see the "LONG-LIVED CONNECTIONS fix" note above.
+ *
  * Callers are responsible for calling client.disconnect() when done.
  *
  * @param {string} sessionFile  Absolute or relative path to the .enc file.
+ * @param {{ longLived?: boolean }} [options]
  * @returns {Promise<TelegramClient>}
  */
-const loadSession = async (sessionFile) => {
+const loadSession = async (sessionFile, options = {}) => {
+  const { longLived = false } = options;
+
   if (!fs.existsSync(sessionFile)) {
     throw new Error('Session file not found');
   }
 
   const encryptedData = fs.readFileSync(sessionFile, 'utf-8');
   const sessionString = decrypt(encryptedData);
-  const { client }    = buildClient(sessionString, /* forSearch */ true);
+  const { client }    = buildClient(sessionString, /* forSearch */ !longLived);
 
   await client.connect();
 
