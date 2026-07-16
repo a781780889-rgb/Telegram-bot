@@ -1,6 +1,8 @@
 const logger = require('../utils/logger');
 const { validatePhoneNumber, validateOtpCode, sanitizeInput } = require('../utils/validators');
 const { accountQueries } = require('../database/db');
+const { subscriberQueries } = require('../database/subscriptionsDb');
+const subscriptionsService = require('../services/subscriptionsService');
 const telegramClient = require('../services/telegramClient');
 const sessionState = require('../services/sessionState');
 const {
@@ -22,10 +24,39 @@ const MAX_OTP_ATTEMPTS = 3;
 
 /**
  * Handle "add_account" button press
+ *
+ * Enforces the max-accounts limit granted by the subscriber's activation
+ * code (via its package). Admins are exempt (unlimited). A subscriber
+ * without an active subscription/package is blocked at 0 by
+ * subscriptionsService.getMaxAccountsForUser, but in practice the global
+ * accessGate middleware already prevents unactivated users from reaching
+ * this handler at all — this check exists specifically to enforce the
+ * *count* limit for already-activated users.
  */
 const handleAddAccountStart = async (ctx) => {
   try {
     const userId = String(ctx.from.id);
+
+    if (!subscriptionsService.isAdmin(ctx.from.id)) {
+      const subscriber = subscriberQueries.getByTelegramId(ctx.from.id);
+      const maxAccounts = subscriptionsService.getMaxAccountsForUser(subscriber);
+      const currentCount = accountQueries.getAllByUserId(userId).length;
+
+      if (currentCount >= maxAccounts) {
+        const text =
+          maxAccounts > 0
+            ? `🚫 لقد وصلت للحد الأقصى المسموح به من الحسابات (${maxAccounts}) وفقًا لباقتك الحالية.\n\nللتمكن من إضافة المزيد، يرجى تفعيل كود بباقة أعلى.`
+            : '🚫 باقتك الحالية لا تسمح بإضافة أي حسابات. يرجى تفعيل كود صالح للحصول على صلاحية إضافة الحسابات.';
+        await ctx.editMessageText(text, { parse_mode: 'Markdown', ...backToMenuKeyboard() }).catch(async () => {
+          await ctx.reply(text, { parse_mode: 'Markdown', ...backToMenuKeyboard() });
+        });
+        if (ctx.callbackQuery) {
+          await ctx.answerCbQuery('🚫 وصلت للحد الأقصى من الحسابات', { show_alert: true }).catch(() => {});
+        }
+        return;
+      }
+    }
+
     sessionState.setAwaitingPhone(userId);
 
     await ctx.editMessageText(phoneRequestMessage, {
