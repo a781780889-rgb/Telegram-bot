@@ -79,9 +79,16 @@ const {
   handleJoinStartConfirm,
   handleJoinStop,
   handleJoinStatistics,
+  handleJoinNeedsApproval,
+  handleJoinApproveLink,
+  handleJoinRejectLink,
+  handleJoinCleanup,
+  handleJoinCleanupConfirm,
   handleJoinBannedAccounts,
   handleJoinLogs,
   handleJoinSettings,
+  handleJoinSettingsSection,
+  handleJoinToggleSetting,
   handleJoinEditSetting,
   handleJoinLinksFileInput,
   isAwaitingLinksFile,
@@ -276,9 +283,28 @@ bot.action('join_start', handleJoinStart);
 bot.action('join_start_confirm', handleJoinStartConfirm);
 bot.action('join_stop', handleJoinStop);
 bot.action('join_statistics', handleJoinStatistics);
+bot.action('join_needs_approval', handleJoinNeedsApproval);
+bot.action('join_cleanup', handleJoinCleanup);
+bot.action('join_cleanup_confirm', handleJoinCleanupConfirm);
 bot.action('join_banned_accounts', handleJoinBannedAccounts);
 bot.action('join_logs', handleJoinLogs);
 bot.action('join_settings', handleJoinSettings);
+
+bot.action('join_settings_timing', async (ctx) => {
+  await handleJoinSettingsSection(ctx, 'timing');
+});
+bot.action('join_settings_breaks', async (ctx) => {
+  await handleJoinSettingsSection(ctx, 'breaks');
+});
+bot.action('join_settings_limits', async (ctx) => {
+  await handleJoinSettingsSection(ctx, 'limits');
+});
+bot.action('join_settings_retry', async (ctx) => {
+  await handleJoinSettingsSection(ctx, 'retry');
+});
+bot.action('join_settings_protection', async (ctx) => {
+  await handleJoinSettingsSection(ctx, 'protection');
+});
 
 bot.action(/^join_account_detail_(\d+)$/, async (ctx) => {
   await handleJoinAccountDetail(ctx, parseInt(ctx.match[1], 10));
@@ -289,18 +315,25 @@ bot.action(/^join_account_enable_(\d+)$/, async (ctx) => {
 bot.action(/^join_account_disable_(\d+)$/, async (ctx) => {
   await handleJoinAccountDisable(ctx, parseInt(ctx.match[1], 10));
 });
+bot.action(/^join_approve_link_(\d+)$/, async (ctx) => {
+  await handleJoinApproveLink(ctx, parseInt(ctx.match[1], 10));
+});
+bot.action(/^join_reject_link_(\d+)$/, async (ctx) => {
+  await handleJoinRejectLink(ctx, parseInt(ctx.match[1], 10));
+});
 
-bot.action('join_edit_batch_size', async (ctx) => {
-  await handleJoinEditSetting(ctx, 'batch_size');
+// Every numeric/range setting (join_edit_batch_size, join_edit_join_delay_range,
+// join_edit_rest_range, join_edit_max_joins, join_edit_max_joins_hour, etc.)
+// routes through one handler keyed by the callback_data suffix.
+bot.action(/^join_edit_(.+)$/, async (ctx) => {
+  await handleJoinEditSetting(ctx, ctx.match[1]);
 });
-bot.action('join_edit_join_delay', async (ctx) => {
-  await handleJoinEditSetting(ctx, 'join_delay_seconds');
-});
-bot.action('join_edit_rest_seconds', async (ctx) => {
-  await handleJoinEditSetting(ctx, 'rest_seconds');
-});
-bot.action('join_edit_max_joins', async (ctx) => {
-  await handleJoinEditSetting(ctx, 'max_joins_per_account');
+
+// Every on/off setting (join_toggle_retry_enabled, join_toggle_auto_distribute,
+// join_toggle_smart_protection_enabled, join_toggle_queue_enabled) routes
+// through one handler that flips the value and re-renders its section.
+bot.action(/^join_toggle_(.+)$/, async (ctx) => {
+  await handleJoinToggleSetting(ctx, ctx.match[1]);
 });
 
 // ─── Central Groups DB + Telegram Folders Callbacks ───────────────────────────
