@@ -25,7 +25,15 @@ const {
   joinAddLinksResultKeyboard,
   joinStartConfirmKeyboard,
   joinRunningKeyboard,
+  joinStatisticsKeyboard,
+  joinNeedsApprovalKeyboard,
+  joinCleanupConfirmKeyboard,
   joinSettingsKeyboard,
+  joinSettingsTimingKeyboard,
+  joinSettingsBreaksKeyboard,
+  joinSettingsLimitsKeyboard,
+  joinSettingsRetryKeyboard,
+  joinSettingsProtectionKeyboard,
   joinSettingsBackKeyboard,
   joinBackKeyboard,
 } = require('../utils/joinKeyboards');
@@ -45,14 +53,26 @@ const {
   joinNoPendingLinksMessage,
   joinNoAvailableAccountsMessage,
   joinAlreadyRunningMessage,
+  joinQueueDisabledMessage,
   joinStartedMessage,
   joinStoppedMessage,
   joinStatisticsMessage,
+  joinNoNeedsApprovalMessage,
+  joinNeedsApprovalMessage,
+  joinApprovalDecidedMessage,
+  joinCleanupConfirmMessage,
+  joinCleanupNothingToDoMessage,
+  joinCleanupDoneMessage,
   joinNoBannedAccountsMessage,
   joinBannedAccountsMessage,
   joinNoLogsMessage,
   joinLogsMessage,
-  joinSettingsMessage,
+  joinSettingsHubMessage,
+  joinSettingsTimingMessage,
+  joinSettingsBreaksMessage,
+  joinSettingsLimitsMessage,
+  joinSettingsRetryMessage,
+  joinSettingsProtectionMessage,
   joinEditPromptMessages,
 } = require('../utils/joinMessages');
 
@@ -81,6 +101,18 @@ const ack = async (ctx) => {
 };
 
 const userId = (ctx) => String(ctx.from.id);
+
+/** Working / stopped / temporarily-banned / hit-limit counts for the dashboard. */
+const computeAccountCounts = (joinAccounts) => {
+  const counts = { working: 0, stopped: 0, banned: 0, full: 0 };
+  for (const acc of joinAccounts) {
+    if (!acc.enabled) { counts.stopped++; continue; }
+    if (acc.state === 'banned' || acc.state === 'resting') { counts.banned++; continue; }
+    if (acc.state === 'full' || acc.state === 'needs_login') { counts.full++; continue; }
+    counts.working++;
+  }
+  return counts;
+};
 
 // ─── Main Menu ────────────────────────────────────────────────────────────────
 
@@ -179,14 +211,17 @@ const handleJoinLinksTextInput = async (ctx) => {
 
   try {
     const { links, invalidCount } = joinService.extractLinksFromText(text);
-    let addedCount = 0;
+    let inserted = 0;
+    let duplicateSkipped = 0;
 
     if (links.length) {
-      addedCount = joinLinkQueries.insertMany(uid, links);
+      ({ inserted, duplicateSkipped } = joinLinkQueries.insertMany(uid, links));
     }
 
     wizardState.resetWizard(uid);
-    await ctx.reply(joinAddLinksResultMessage(addedCount, invalidCount, 0), {
+    if (inserted) joinService.notifyLinksAdded(uid);
+
+    await ctx.reply(joinAddLinksResultMessage(inserted, invalidCount, duplicateSkipped), {
       parse_mode: 'Markdown',
       ...joinAddLinksResultKeyboard(),
     });
@@ -267,10 +302,11 @@ const handleJoinLinksFileInput = async (ctx) => {
       return;
     }
 
-    const addedCount = joinLinkQueries.insertMany(uid, links);
+    const { inserted, duplicateSkipped } = joinLinkQueries.insertMany(uid, links);
     wizardState.resetWizard(uid);
+    if (inserted) joinService.notifyLinksAdded(uid);
 
-    await ctx.reply(joinAddLinksResultMessage(addedCount, invalidCount, 0), {
+    await ctx.reply(joinAddLinksResultMessage(inserted, invalidCount, duplicateSkipped), {
       parse_mode: 'Markdown',
       ...joinAddLinksResultKeyboard(),
     });
@@ -292,6 +328,20 @@ const isAwaitingLinksFile = (uid) => {
 
 // ─── Start / Stop ─────────────────────────────────────────────────────────────
 
+const availableAccountIdsFor = (uid) => {
+  // Make sure every one of the user's actual Telegram accounts has a
+  // join_accounts row before filtering — otherwise an account that was
+  // added but never opened via "👤 إدارة حسابات الانضمام" would be
+  // invisible here and incorrectly reported as unavailable.
+  const accounts = accountQueries.getAllByUserId(uid);
+  for (const acc of accounts) {
+    joinAccountQueries.ensure(uid, acc.id);
+  }
+  return joinAccountQueries.getAllByUserId(uid)
+    .filter((a) => a.enabled && a.account_status === 'connected' && a.state !== 'banned' && a.state !== 'full')
+    .map((a) => a.account_id);
+};
+
 const handleJoinStart = async (ctx) => {
   try {
     const uid = userId(ctx);
@@ -312,11 +362,7 @@ const handleJoinStart = async (ctx) => {
       return;
     }
 
-    const joinAccounts = joinAccountQueries.getAllByUserId(uid);
-    const availableAccountIds = joinAccounts
-      .filter((a) => a.enabled && a.account_status === 'connected' && a.state !== 'banned' && a.state !== 'full')
-      .map((a) => a.account_id);
-
+    const availableAccountIds = availableAccountIdsFor(uid);
     if (!availableAccountIds.length) {
       await safeEdit(ctx, joinNoAvailableAccountsMessage, {
         parse_mode: 'Markdown',
@@ -339,11 +385,7 @@ const handleJoinStart = async (ctx) => {
 const handleJoinStartConfirm = async (ctx) => {
   try {
     const uid = userId(ctx);
-    const joinAccounts = joinAccountQueries.getAllByUserId(uid);
-    const availableAccountIds = joinAccounts
-      .filter((a) => a.enabled && a.account_status === 'connected' && a.state !== 'banned' && a.state !== 'full')
-      .map((a) => a.account_id);
-
+    const availableAccountIds = availableAccountIdsFor(uid);
     const result = await joinService.startJoinRun(uid, availableAccountIds);
 
     if (!result.started) {
@@ -351,6 +393,7 @@ const handleJoinStartConfirm = async (ctx) => {
         already_running: joinAlreadyRunningMessage,
         no_pending_links: joinNoPendingLinksMessage,
         no_available_accounts: joinNoAvailableAccountsMessage,
+        queue_disabled: joinQueueDisabledMessage,
       };
       await safeEdit(ctx, messages[result.reason] || '⚠️ تعذر بدء العملية.', {
         parse_mode: 'Markdown',
@@ -381,7 +424,7 @@ const handleJoinStop = async (ctx) => {
   }
 };
 
-// ─── Statistics ───────────────────────────────────────────────────────────────
+// ─── Statistics / Performance Dashboard ────────────────────────────────────────
 
 const handleJoinStatistics = async (ctx) => {
   try {
@@ -389,14 +432,89 @@ const handleJoinStatistics = async (ctx) => {
     const linkStats = joinLinkQueries.countByStatus(uid);
     const groupsCount = joinGroupQueries.countByUserId(uid);
     const running = joinService.isRunning(uid);
+    const accountCounts = computeAccountCounts(joinAccountQueries.getAllByUserId(uid));
+    const perf = joinLogQueries.getPerformanceStats(uid);
 
-    await safeEdit(ctx, joinStatisticsMessage(linkStats, groupsCount, running), {
+    await safeEdit(ctx, joinStatisticsMessage(linkStats, groupsCount, running, accountCounts, perf), {
       parse_mode: 'Markdown',
-      ...(running ? joinRunningKeyboard() : joinBackKeyboard()),
+      ...joinStatisticsKeyboard(running),
     });
     await ack(ctx);
   } catch (error) {
     logger.error('handleJoinStatistics error:', error);
+  }
+};
+
+// ─── Needs-approval review ─────────────────────────────────────────────────────
+
+const handleJoinNeedsApproval = async (ctx) => {
+  try {
+    const uid = userId(ctx);
+    const links = joinLinkQueries.getNeedsApproval(uid, 8);
+    if (!links.length) {
+      await safeEdit(ctx, joinNoNeedsApprovalMessage, { parse_mode: 'Markdown', ...joinBackKeyboard() });
+    } else {
+      await safeEdit(ctx, joinNeedsApprovalMessage(links), {
+        parse_mode: 'Markdown',
+        ...joinNeedsApprovalKeyboard(links),
+      });
+    }
+    await ack(ctx);
+  } catch (error) {
+    logger.error('handleJoinNeedsApproval error:', error);
+  }
+};
+
+const handleJoinApprovalDecision = async (ctx, linkId, accepted) => {
+  try {
+    const link = joinLinkQueries.getById(linkId);
+    if (link && link.status === 'needs_approval') {
+      joinLinkQueries.decideApproval(linkId, accepted);
+      if (accepted && link.telegram_id) {
+        const uid = userId(ctx);
+        joinGroupQueries.register(uid, link.telegram_id, null, link.assigned_account_id, link.url, { source: 'join' });
+      }
+    }
+    await ctx.reply(joinApprovalDecidedMessage(accepted));
+    await handleJoinNeedsApproval(ctx);
+  } catch (error) {
+    logger.error('handleJoinApprovalDecision error:', error);
+  }
+};
+
+const handleJoinApproveLink = (ctx, linkId) => handleJoinApprovalDecision(ctx, linkId, true);
+const handleJoinRejectLink = (ctx, linkId) => handleJoinApprovalDecision(ctx, linkId, false);
+
+// ─── Cleanup ──────────────────────────────────────────────────────────────────
+
+const handleJoinCleanup = async (ctx) => {
+  try {
+    const uid = userId(ctx);
+    const stats = joinLinkQueries.countByStatus(uid);
+    const count = stats.invalid + stats.expired + stats.private + stats.rejected + stats.failed_privacy + stats.failed;
+
+    if (!count) {
+      await safeEdit(ctx, joinCleanupNothingToDoMessage, { parse_mode: 'Markdown', ...joinBackKeyboard() });
+    } else {
+      await safeEdit(ctx, joinCleanupConfirmMessage(count), {
+        parse_mode: 'Markdown',
+        ...joinCleanupConfirmKeyboard(),
+      });
+    }
+    await ack(ctx);
+  } catch (error) {
+    logger.error('handleJoinCleanup error:', error);
+  }
+};
+
+const handleJoinCleanupConfirm = async (ctx) => {
+  try {
+    const uid = userId(ctx);
+    const count = joinLinkQueries.softDeleteTerminal(uid);
+    await safeEdit(ctx, joinCleanupDoneMessage(count), { parse_mode: 'Markdown', ...joinBackKeyboard() });
+    await ack(ctx);
+  } catch (error) {
+    logger.error('handleJoinCleanupConfirm error:', error);
   }
 };
 
@@ -442,31 +560,95 @@ const handleJoinLogs = async (ctx) => {
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
 
+const SECTION_RENDERERS = {
+  timing: (s) => [joinSettingsTimingMessage(s), joinSettingsTimingKeyboard()],
+  breaks: (s) => [joinSettingsBreaksMessage(s), joinSettingsBreaksKeyboard()],
+  limits: (s) => [joinSettingsLimitsMessage(s), joinSettingsLimitsKeyboard()],
+  retry: (s) => [joinSettingsRetryMessage(s), joinSettingsRetryKeyboard(s)],
+  protection: (s) => [joinSettingsProtectionMessage(s), joinSettingsProtectionKeyboard(s)],
+};
+
+const sendSettingsSection = async (ctx, uid, section, asReply) => {
+  const settings = joinSettingsQueries.get(uid);
+  const renderer = SECTION_RENDERERS[section] || SECTION_RENDERERS.timing;
+  const [text, keyboard] = renderer(settings);
+  if (asReply) {
+    await ctx.reply(text, { parse_mode: 'Markdown', ...keyboard });
+  } else {
+    await safeEdit(ctx, text, { parse_mode: 'Markdown', ...keyboard });
+  }
+};
+
 const handleJoinSettings = async (ctx) => {
   try {
-    const uid = userId(ctx);
-    const settings = joinSettingsQueries.get(uid);
-    await safeEdit(ctx, joinSettingsMessage(settings), {
-      parse_mode: 'Markdown',
-      ...joinSettingsKeyboard(),
-    });
+    await safeEdit(ctx, joinSettingsHubMessage, { parse_mode: 'Markdown', ...joinSettingsKeyboard() });
     await ack(ctx);
   } catch (error) {
     logger.error('handleJoinSettings error:', error);
   }
 };
 
+const handleJoinSettingsSection = async (ctx, section) => {
+  try {
+    await sendSettingsSection(ctx, userId(ctx), section, false);
+    await ack(ctx);
+  } catch (error) {
+    logger.error('handleJoinSettingsSection error:', error);
+  }
+};
+
+const TOGGLE_SECTION = {
+  retry_enabled: 'retry',
+  smart_protection_enabled: 'protection',
+  auto_distribute: 'protection',
+  queue_enabled: 'protection',
+};
+
+const handleJoinToggleSetting = async (ctx, key) => {
+  try {
+    if (!TOGGLE_SECTION[key]) return;
+    const uid = userId(ctx);
+    const settings = joinSettingsQueries.get(uid);
+    joinSettingsQueries.update(uid, { [key]: settings[key] ? 0 : 1 });
+    await sendSettingsSection(ctx, uid, TOGGLE_SECTION[key], false);
+    await ack(ctx);
+  } catch (error) {
+    logger.error('handleJoinToggleSetting error:', error);
+  }
+};
+
+/** callback-data suffix (e.g. "join_edit_<key>") → wizard step */
 const SETTINGS_STEP_MAP = {
   batch_size: WIZARD_STEPS.AWAITING_BATCH_SIZE,
-  join_delay_seconds: WIZARD_STEPS.AWAITING_JOIN_DELAY,
-  rest_seconds: WIZARD_STEPS.AWAITING_REST_SECONDS,
-  max_joins_per_account: WIZARD_STEPS.AWAITING_MAX_JOINS,
+  join_delay_range: WIZARD_STEPS.AWAITING_JOIN_DELAY_RANGE,
+  rest_range: WIZARD_STEPS.AWAITING_REST_RANGE,
+  max_joins: WIZARD_STEPS.AWAITING_MAX_JOINS,
+  max_joins_hour: WIZARD_STEPS.AWAITING_MAX_JOINS_HOUR,
+  max_joins_day: WIZARD_STEPS.AWAITING_MAX_JOINS_DAY,
+  max_joins_session: WIZARD_STEPS.AWAITING_MAX_JOINS_SESSION,
+  max_retries: WIZARD_STEPS.AWAITING_MAX_RETRIES,
+  retry_delay: WIZARD_STEPS.AWAITING_RETRY_DELAY,
+};
+
+/** wizard step → { keys: [dbColumn...], type: 'single'|'range', allowZero, section } */
+const STEP_TO_SETTING = {
+  [WIZARD_STEPS.AWAITING_BATCH_SIZE]: { keys: ['batch_size'], type: 'single', section: 'breaks' },
+  [WIZARD_STEPS.AWAITING_JOIN_DELAY_RANGE]: { keys: ['join_delay_min_seconds', 'join_delay_max_seconds'], type: 'range', section: 'timing' },
+  [WIZARD_STEPS.AWAITING_REST_RANGE]: { keys: ['rest_min_seconds', 'rest_max_seconds'], type: 'range', section: 'breaks' },
+  [WIZARD_STEPS.AWAITING_MAX_JOINS]: { keys: ['max_joins_per_account'], type: 'single', section: 'limits' },
+  [WIZARD_STEPS.AWAITING_MAX_JOINS_HOUR]: { keys: ['max_joins_per_hour'], type: 'single', allowZero: true, section: 'limits' },
+  [WIZARD_STEPS.AWAITING_MAX_JOINS_DAY]: { keys: ['max_joins_per_day'], type: 'single', allowZero: true, section: 'limits' },
+  [WIZARD_STEPS.AWAITING_MAX_JOINS_SESSION]: { keys: ['max_joins_per_session'], type: 'single', allowZero: true, section: 'limits' },
+  [WIZARD_STEPS.AWAITING_MAX_RETRIES]: { keys: ['max_retries'], type: 'single', allowZero: true, section: 'retry' },
+  [WIZARD_STEPS.AWAITING_RETRY_DELAY]: { keys: ['retry_delay_seconds'], type: 'single', section: 'retry' },
 };
 
 const handleJoinEditSetting = async (ctx, key) => {
   try {
     const uid = userId(ctx);
-    wizardState.setWizardState(uid, { step: SETTINGS_STEP_MAP[key], settingKey: key });
+    const step = SETTINGS_STEP_MAP[key];
+    if (!step) return;
+    wizardState.setWizardState(uid, { step });
     await safeEdit(ctx, joinEditPromptMessages[key], {
       parse_mode: 'Markdown',
       ...joinSettingsBackKeyboard(),
@@ -480,22 +662,39 @@ const handleJoinEditSetting = async (ctx, key) => {
 const handleJoinSettingsTextInput = async (ctx) => {
   const uid = userId(ctx);
   const wiz = wizardState.getWizardState(uid);
-  const text = (ctx.message?.text || '').trim();
-  const value = parseInt(text, 10);
+  const spec = STEP_TO_SETTING[wiz.step];
+  if (!spec) return;
 
-  if (isNaN(value) || value <= 0) {
-    await ctx.reply('⚠️ يرجى إدخال رقم صحيح أكبر من صفر.');
-    return;
+  const text = (ctx.message?.text || '').trim();
+
+  if (spec.type === 'range') {
+    const match = text.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (!match) {
+      await ctx.reply('⚠️ الصيغة غير صحيحة. أرسل رقمين مفصولين بشرطة، مثال: `20-45`', { parse_mode: 'Markdown' });
+      return;
+    }
+    let min = parseInt(match[1], 10);
+    let max = parseInt(match[2], 10);
+    if (min <= 0 || max <= 0) {
+      await ctx.reply('⚠️ يجب أن تكون القيم أكبر من صفر.');
+      return;
+    }
+    if (min > max) [min, max] = [max, min];
+    joinSettingsQueries.update(uid, { [spec.keys[0]]: min, [spec.keys[1]]: max });
+  } else {
+    const value = parseInt(text, 10);
+    const minAllowed = spec.allowZero ? 0 : 1;
+    if (isNaN(value) || value < minAllowed) {
+      await ctx.reply(
+        spec.allowZero ? '⚠️ يرجى إدخال رقم صحيح (0 أو أكبر).' : '⚠️ يرجى إدخال رقم صحيح أكبر من صفر.'
+      );
+      return;
+    }
+    joinSettingsQueries.update(uid, { [spec.keys[0]]: value });
   }
 
-  joinSettingsQueries.update(uid, { [wiz.settingKey]: value });
   wizardState.resetWizard(uid);
-
-  const settings = joinSettingsQueries.get(uid);
-  await ctx.reply(joinSettingsMessage(settings), {
-    parse_mode: 'Markdown',
-    ...joinSettingsKeyboard(),
-  });
+  await sendSettingsSection(ctx, uid, spec.section, true);
 };
 
 // ─── Text Input Router ────────────────────────────────────────────────────────
@@ -507,16 +706,11 @@ const handleJoinTextInput = async (ctx) => {
   const uid = userId(ctx);
   const wiz = wizardState.getWizardState(uid);
 
-  switch (wiz.step) {
-    case WIZARD_STEPS.AWAITING_LINKS:
-      return handleJoinLinksTextInput(ctx);
-    case WIZARD_STEPS.AWAITING_BATCH_SIZE:
-    case WIZARD_STEPS.AWAITING_JOIN_DELAY:
-    case WIZARD_STEPS.AWAITING_REST_SECONDS:
-    case WIZARD_STEPS.AWAITING_MAX_JOINS:
-      return handleJoinSettingsTextInput(ctx);
-    default:
-      break;
+  if (wiz.step === WIZARD_STEPS.AWAITING_LINKS) {
+    return handleJoinLinksTextInput(ctx);
+  }
+  if (STEP_TO_SETTING[wiz.step]) {
+    return handleJoinSettingsTextInput(ctx);
   }
 };
 
@@ -535,9 +729,16 @@ module.exports = {
   handleJoinStartConfirm,
   handleJoinStop,
   handleJoinStatistics,
+  handleJoinNeedsApproval,
+  handleJoinApproveLink,
+  handleJoinRejectLink,
+  handleJoinCleanup,
+  handleJoinCleanupConfirm,
   handleJoinBannedAccounts,
   handleJoinLogs,
   handleJoinSettings,
+  handleJoinSettingsSection,
+  handleJoinToggleSetting,
   handleJoinEditSetting,
   handleJoinTextInput,
 };
