@@ -121,6 +121,73 @@ const runMigrations = (database) => {
       db.exec('ALTER TABLE accounts ADD COLUMN last_restored_at DATETIME');
     }
   });
+
+  // ── v3: Subscription and activation-code system ───────────────────────────
+  apply(3, 'subscription_system', (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS activation_codes (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        code            TEXT NOT NULL UNIQUE,
+        plan_key        TEXT NOT NULL,
+        plan_label      TEXT NOT NULL,
+        duration_days   INTEGER,
+        max_accounts    INTEGER NOT NULL CHECK (max_accounts > 0),
+        status          TEXT NOT NULL DEFAULT 'unused' CHECK (status IN ('unused','used','expired','cancelled')),
+        created_by      TEXT,
+        used_by         TEXT,
+        created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+        activated_at    DATETIME,
+        cancelled_by    TEXT,
+        cancelled_at    DATETIME
+      );
+
+      CREATE TABLE IF NOT EXISTS subscriptions (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id           TEXT NOT NULL,
+        activation_code_id INTEGER REFERENCES activation_codes(id),
+        plan_key          TEXT NOT NULL,
+        plan_label        TEXT NOT NULL,
+        duration_days     INTEGER,
+        max_accounts      INTEGER NOT NULL CHECK (max_accounts > 0),
+        started_at        DATETIME NOT NULL,
+        expires_at        DATETIME,
+        status            TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','expired','cancelled','replaced')),
+        created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at        DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS subscription_events (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id         TEXT NOT NULL,
+        subscription_id INTEGER REFERENCES subscriptions(id),
+        event_type      TEXT NOT NULL,
+        metadata        TEXT,
+        created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS admin_actions (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        admin_id    TEXT NOT NULL,
+        action      TEXT NOT NULL,
+        target      TEXT,
+        metadata    TEXT,
+        created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS subscription_notifications (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id         TEXT NOT NULL,
+        subscription_id INTEGER NOT NULL REFERENCES subscriptions(id),
+        notice_key      TEXT NOT NULL,
+        sent_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(subscription_id, notice_key)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_activation_codes_status ON activation_codes(status);
+      CREATE INDEX IF NOT EXISTS idx_subscriptions_user_status ON subscriptions(user_id, status);
+      CREATE INDEX IF NOT EXISTS idx_subscriptions_expiry ON subscriptions(expires_at);
+    `);
+  });
 };
 
 // ─── Schema initializer (called once on first getDb()) ────────────────────────

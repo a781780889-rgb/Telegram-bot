@@ -15,6 +15,7 @@ const { validatePhoneNumber, validateOtpCode, sanitizeInput } = require('../util
 const { accountQueries } = require('../database/db');
 const telegramClient = require('../services/telegramClient');
 const sessionState = require('../services/sessionState');
+const subscriptionService = require('../services/subscriptionService');
 const {
   mainMenuKeyboard,
   cancelKeyboard,
@@ -39,6 +40,14 @@ const MAX_OTP_ATTEMPTS = 3;
 const handleAddAccountStart = async (ctx) => {
   try {
     const userId = String(ctx.from.id);
+    const access = subscriptionService.getAccess(userId);
+    if (!access.allowed) {
+      const message = access.reason === 'limit_reached'
+        ? `⚠️ وصلت إلى الحد الأقصى للحسابات المسموح بها في اشتراكك.\n\nالمسموح: ${access.subscription.max_accounts}\nالمستخدم: ${access.used}\nالمتبقي: ${access.remaining}`
+        : '🚫 لا يوجد اشتراك فعال يسمح بإضافة الحسابات. يرجى تفعيل كود اشتراك صالح أولاً.';
+      await ctx.reply(message, require('../handlers/subscription').subscriptionKeyboard(false));
+      return;
+    }
 
     sessionState.setAwaitingPhone(userId);
 
@@ -57,6 +66,14 @@ const handleAddAccountStart = async (ctx) => {
  */
 const handlePhoneInput = async (ctx) => {
   const userId = String(ctx.from.id);
+  const access = subscriptionService.getAccess(userId);
+  if (!access.allowed) {
+    await ctx.reply(access.reason === 'limit_reached'
+      ? `⚠️ وصلت إلى الحد الأقصى للحسابات المسموح بها.\n\nالمسموح: ${access.subscription.max_accounts}\nالمستخدم: ${access.used}\nالمتبقي: ${access.remaining}`
+      : '🚫 انتهى اشتراكك أو لا يوجد اشتراك فعال. فعّل كوداً جديداً للمتابعة.');
+    sessionState.resetState(userId);
+    return;
+  }
   const rawPhone = sanitizeInput(ctx.message.text);
 
   const { valid, normalized, error } = validatePhoneNumber(rawPhone);

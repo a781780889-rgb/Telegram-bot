@@ -142,6 +142,16 @@ const {
   handlePublishLogs,
 } = require('./handlers/publishMenu');
 const { startPublishScheduler } = require('./services/publishService');
+const {
+  handleSubscriptions,
+  handleSubscriptionDetails,
+  handleActivateStart,
+  handleAdminMenu,
+  handleAdminCreateCode,
+  handleAdminQuantity,
+  handleAdminPlan,
+  handleAdminStats,
+} = require('./handlers/subscription');
 
 const { restoreAllAccounts } = require('./services/sessionRestoreService');
 
@@ -189,6 +199,19 @@ bot.command('menu', async (ctx) => {
 });
 
 // ─── Navigation Callbacks ─────────────────────────────────────────────────────
+
+bot.action('subscriptions_menu', handleSubscriptions);
+bot.action('subscription_details', handleSubscriptionDetails);
+bot.action('subscription_activate', handleActivateStart);
+bot.action('subscription_admin', handleAdminMenu);
+bot.action('admin_create_code', handleAdminCreateCode);
+bot.action(/^admin_quantity_(1|5|10|50)$/, async (ctx) => {
+  await handleAdminQuantity(ctx, parseInt(ctx.match[1], 10));
+});
+bot.action('admin_subscription_stats', handleAdminStats);
+bot.action(/^admin_plan_(30d|60d|90d|1y|lifetime)_(1|5|10|50)$/, async (ctx) => {
+  await handleAdminPlan(ctx, ctx.match[1], parseInt(ctx.match[2], 10));
+});
 
 bot.action('main_menu', handleMainMenu);
 bot.action('help', handleHelp);

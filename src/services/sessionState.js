@@ -17,6 +17,8 @@ const STATES = {
   AWAITING_PHONE: 'AWAITING_PHONE',
   AWAITING_OTP: 'AWAITING_OTP',
   AWAITING_PASSWORD: 'AWAITING_PASSWORD',
+  AWAITING_ACTIVATION_CODE: 'AWAITING_ACTIVATION_CODE',
+  AWAITING_ADMIN_LIMIT: 'AWAITING_ADMIN_LIMIT',
 };
 
 // userId -> { state, phone, accountId, attempts, startedAt }
@@ -92,6 +94,14 @@ const setAwaitingPassword = (userId, phone, accountId) => {
   });
 };
 
+const setAwaitingActivationCode = (userId) => {
+  userStates.set(String(userId), { state: STATES.AWAITING_ACTIVATION_CODE, startedAt: Date.now(), attempts: 0 });
+};
+
+const setAwaitingAdminLimit = (userId, planKey, quantity = 1) => {
+  userStates.set(String(userId), { state: STATES.AWAITING_ADMIN_LIMIT, planKey, quantity, startedAt: Date.now(), attempts: 0 });
+};
+
 /**
  * Increment attempts counter
  * @param {string} userId
@@ -128,6 +138,8 @@ module.exports = {
   setAwaitingPhone,
   setAwaitingOtp,
   setAwaitingPassword,
+  setAwaitingActivationCode,
+  setAwaitingAdminLimit,
   incrementAttempts,
   getAttempts,
   resetState,

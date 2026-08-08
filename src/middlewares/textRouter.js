@@ -16,6 +16,7 @@ const { handleFoldersTextInput } = require('../handlers/foldersMenu');
 const { handlePublishTextInput } = require('../handlers/publishMenu');
 const { mainMenuKeyboard } = require('../utils/keyboards');
 const logger = require('../utils/logger');
+const { handleActivationCodeInput, handleAdminLimitInput } = require('../handlers/subscription');
 
 /**
  * Route incoming text messages to the appropriate handler
@@ -86,6 +87,14 @@ const textRouter = async (ctx, next) => {
 
     case STATES.AWAITING_PASSWORD:
       await handlePasswordInput(ctx);
+      break;
+
+    case STATES.AWAITING_ACTIVATION_CODE:
+      await handleActivationCodeInput(ctx);
+      break;
+
+    case STATES.AWAITING_ADMIN_LIMIT:
+      await handleAdminLimitInput(ctx);
       break;
 
     case STATES.IDLE:
