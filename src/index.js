@@ -409,7 +409,16 @@ bot.action('publish_dashboard_refresh', handleDashboard);
 bot.action('publish_logs', handlePublishLogs);
 
 // ─── Persistent Publish Scheduling ───────────────────────────────────────────
-bot.action('publish_schedule_start', scheduleMenu.menu);
+bot.action('publish_schedule_start', async (ctx) => {
+  // Answer the callback immediately so Telegram stops showing the loading spinner.
+  await ctx.answerCbQuery('').catch((error) => logger.warn(`schedule callback acknowledgement failed: ${error.message}`));
+  try {
+    await scheduleMenu.menu(ctx);
+  } catch (error) {
+    logger.error(`Failed to open publish scheduling menu: ${error.stack || error.message}`);
+    await ctx.reply('تعذر فتح جدولة النشر مؤقتًا. أعد المحاولة أو راجع سجل التشغيل.').catch(() => {});
+  }
+});
 bot.action('schedule_menu', scheduleMenu.menu);
 bot.action('schedule_new', scheduleMenu.start);
 bot.action('schedule_list', (ctx) => scheduleMenu.list(ctx));
