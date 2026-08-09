@@ -142,6 +142,8 @@ const {
   handlePublishLogs,
 } = require('./handlers/publishMenu');
 const { startPublishScheduler } = require('./services/publishService');
+const scheduleMenu = require('./handlers/scheduleMenu');
+const { startScheduleService } = require('./services/scheduleService');
 const {
   handleSubscriptions,
   handleSubscriptionDetails,
@@ -406,6 +408,39 @@ bot.action('publish_dashboard', handleDashboard);
 bot.action('publish_dashboard_refresh', handleDashboard);
 bot.action('publish_logs', handlePublishLogs);
 
+// ─── Persistent Publish Scheduling ───────────────────────────────────────────
+bot.action('publish_schedule_start', scheduleMenu.menu);
+bot.action('schedule_menu', scheduleMenu.menu);
+bot.action('schedule_new', scheduleMenu.start);
+bot.action('schedule_list', (ctx) => scheduleMenu.list(ctx));
+bot.action('schedule_upcoming', (ctx) => scheduleMenu.list(ctx, 'running'));
+bot.action('schedule_toggle_list', (ctx) => scheduleMenu.list(ctx));
+bot.action('schedule_edit_list', (ctx) => scheduleMenu.list(ctx));
+bot.action('schedule_delete_list', (ctx) => scheduleMenu.list(ctx));
+bot.action('schedule_stats', scheduleMenu.stats);
+bot.action('schedule_logs', scheduleMenu.logs);
+bot.action('schedule_settings', scheduleMenu.settings);
+bot.action('schedule_cancel', scheduleMenu.cancel);
+bot.action('schedule_accounts_done', scheduleMenu.accountsDone);
+bot.action('schedule_targets_done', scheduleMenu.content);
+bot.action('schedule_content_done', scheduleMenu.scheduleTime);
+bot.action('schedule_content_back', scheduleMenu.content);
+bot.action('schedule_target_manual', async (ctx) => { const w = require('./services/scheduleWizardState'); w.update(String(ctx.from.id), { step: 'targets_manual' }); await ctx.reply('أرسل رابط المجموعة أو القناة أو username.'); });
+bot.action('schedule_content_new', scheduleMenu.contentNew);
+bot.action('schedule_summary', scheduleMenu.summary);
+bot.action('schedule_confirm', scheduleMenu.confirm);
+bot.action(/^schedule_account_(\d+)$/, (ctx) => scheduleMenu.toggleAccount(ctx, Number(ctx.match[1])));
+bot.action(/^schedule_target_(\d+)$/, (ctx) => scheduleMenu.toggleTarget(ctx, ctx.match[1]));
+bot.action(/^schedule_ad_(\d+)$/, (ctx) => scheduleMenu.selectAd(ctx, Number(ctx.match[1])));
+bot.action(/^schedule_repeat_(once|daily|weekly|custom)$/, (ctx) => scheduleMenu.selectRepeat(ctx, ctx.match[1]));
+bot.action(/^schedule_delay_(0|5|15|60)$/, (ctx) => scheduleMenu.setDelay(ctx, Number(ctx.match[1])));
+bot.action('schedule_delay_custom', async (ctx) => { const w = require('./services/scheduleWizardState'); w.update(String(ctx.from.id), { step: 'custom_delay' }); await ctx.reply('أرسل التأخير بالثواني.'); });
+bot.action(/^schedule_toggle_(\d+)$/, (ctx) => scheduleMenu.toggle(ctx, Number(ctx.match[1])));
+bot.action(/^schedule_detail_(\d+)$/, (ctx) => scheduleMenu.detail(ctx, Number(ctx.match[1])));
+bot.action(/^schedule_edit_(\d+)$/, (ctx) => scheduleMenu.editStart(ctx, Number(ctx.match[1])));
+bot.action(/^schedule_delete_(\d+)$/, (ctx) => scheduleMenu.remove(ctx, Number(ctx.match[1])));
+bot.action(/^schedule_delete_yes_(\d+)$/, (ctx) => scheduleMenu.removeYes(ctx, Number(ctx.match[1])));
+
 bot.action(/^publish_ad_view_(\d+)$/, async (ctx) => {
   await handleAdView(ctx, parseInt(ctx.match[1], 10));
 });
@@ -551,6 +586,7 @@ const startBot = async () => {
 
     // Start the publish engine's background scheduler.
     startPublishScheduler();
+    startScheduleService();
   } catch (error) {
     logger.error('Failed to start bot:', error);
     process.exit(1);

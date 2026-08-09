@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "migrate:postgres": "node scripts/migrate-sqlite-to-postgres.js"
+    "migrate:postgres": "node scripts/migrate-sqlite-to-postgres.js",
+    "test:schedule": "node scripts/test-schedule-flow.js"
   },
   "dependencies": {
     "better-sqlite3": "^9.4.3",

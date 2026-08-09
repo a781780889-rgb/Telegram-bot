@@ -9,6 +9,7 @@
 
 const { getDb } = require('./db');
 const logger = require('../utils/logger');
+const { initScheduleSchema } = require('./scheduleDb');
 
 const columnExists = (database, table, column) => {
   const cols = database.prepare(`PRAGMA table_info(${table})`).all();
@@ -80,6 +81,7 @@ const initPublishSchema = () => {
     db.exec(`ALTER TABLE accounts ADD COLUMN publish_count INTEGER DEFAULT 0`);
   }
 
+  initScheduleSchema();
   logger.info('Publishing Engine schema initialised.');
 };
 

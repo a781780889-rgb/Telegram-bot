@@ -154,6 +154,7 @@ const startPublishScheduler = () => {
 };
 
 module.exports = {
+  getClientForAccount,
   sendAd,
   executeTaskStep,
   startPublishScheduler

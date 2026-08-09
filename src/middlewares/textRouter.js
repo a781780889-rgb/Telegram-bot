@@ -14,6 +14,8 @@ const { handleLinksTextInput } = require('../handlers/linksMenu');
 const { handleJoinTextInput } = require('../handlers/joinMenu');
 const { handleFoldersTextInput } = require('../handlers/foldersMenu');
 const { handlePublishTextInput } = require('../handlers/publishMenu');
+const scheduleMenu = require('../handlers/scheduleMenu');
+const scheduleWizardState = require('../services/scheduleWizardState');
 const { mainMenuKeyboard } = require('../utils/keyboards');
 const logger = require('../utils/logger');
 const { handleActivationCodeInput, handleAdminLimitInput } = require('../handlers/subscription');
@@ -70,7 +72,13 @@ const textRouter = async (ctx, next) => {
     return;
   }
 
-  // ─── Publish engine wizard takes priority when user is in a text-input step ──
+  // ─── Schedule wizard takes priority when user is in a text-input step ─────────
+  if (scheduleWizardState.isActive(userId)) {
+    const handled = await scheduleMenu.text(ctx);
+    if (handled) return;
+  }
+
+  // ─── Publish engine wizard takes priority when user is in a text-input step ───
   if (publishWizardState.isAwaitingTextInput(userId)) {
     await handlePublishTextInput(ctx);
     return;
