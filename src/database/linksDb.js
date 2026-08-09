@@ -342,16 +342,10 @@ const linksStatsQueries = {
         COALESCE(SUM(messages_scanned), 0)                   AS total_messages,
         MAX(started_at)                                      AS last_search,
         CASE
-          WHEN SUM(
-            CAST((julianday(COALESCE(finished_at, CURRENT_TIMESTAMP))
-                  - julianday(started_at)) * 86400 AS INTEGER)
-          ) > 0
+          WHEN SUM(EXTRACT(EPOCH FROM (COALESCE(finished_at, CURRENT_TIMESTAMP) - started_at))) > 0
           THEN ROUND(
-            CAST(COALESCE(SUM(messages_scanned), 0) AS REAL) /
-            SUM(
-              CAST((julianday(COALESCE(finished_at, CURRENT_TIMESTAMP))
-                    - julianday(started_at)) * 86400 AS INTEGER)
-            )
+            CAST(COALESCE(SUM(messages_scanned), 0) AS DOUBLE PRECISION) /
+            SUM(EXTRACT(EPOCH FROM (COALESCE(finished_at, CURRENT_TIMESTAMP) - started_at)))
           )
           ELSE NULL
         END AS avg_speed

@@ -1,4 +1,5 @@
-const Database = require('better-sqlite3');
+const SQLiteDatabase = require('better-sqlite3');
+const { PgCompat } = require('./pgCompat');
 const path = require('path');
 const fs = require('fs');
 const logger = require('../utils/logger');
@@ -14,9 +15,17 @@ let db;
 
 const getDb = () => {
   if (!db) {
-    db = new Database(dbPath);
-    db.pragma('journal_mode = WAL');
-    db.pragma('foreign_keys = ON');
+    if (process.env.DATABASE_URL) {
+      db = new PgCompat(process.env.DATABASE_URL, {
+        ssl: process.env.DATABASE_SSL !== 'false',
+      });
+      logger.info('Using PostgreSQL database from DATABASE_URL.');
+    } else {
+      db = new SQLiteDatabase(dbPath);
+      db.pragma('journal_mode = WAL');
+      db.pragma('foreign_keys = ON');
+      logger.warn('DATABASE_URL is not set; using local SQLite database.');
+    }
     initializeSchema();
   }
   return db;
