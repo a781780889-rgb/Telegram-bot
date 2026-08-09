@@ -24,7 +24,7 @@ const plansKeyboard = (quantity = 1) => Markup.inlineKeyboard([
   [Markup.button.callback(`60 يوم (${quantity} كود)`, `admin_plan_60d_${quantity}`)],
   [Markup.button.callback(`90 يوم (${quantity} كود)`, `admin_plan_90d_${quantity}`)],
   [Markup.button.callback(`سنة (${quantity} كود)`, `admin_plan_1y_${quantity}`)],
-  [Markup.button.callback(`Lifetime (${quantity} كود)`, `admin_plan_lifetime_${quantity}`)],
+  [Markup.button.callback(`مفتوح (${quantity} كود)`, `admin_plan_lifetime_${quantity}`)],
   [Markup.button.callback('⬅️ رجوع', 'subscription_admin')],
 ]);
 
@@ -72,8 +72,12 @@ const handleAdminQuantity = async (ctx, quantity) => {
 };
 const handleAdminPlan = async (ctx, planKey, quantity) => {
   if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery('غير مصرح لك.', { show_alert: true });
-  sessionState.setAwaitingAdminLimit(String(ctx.from.id), planKey, quantity);
-  await render(ctx, `أرسل الآن عدد الحسابات المسموح بها لكل كود (${quantity} كود).\nمثال: 10`, Markup.inlineKeyboard([[Markup.button.callback('❌ إلغاء', 'subscription_admin')]]));
+  try {
+    const codes = subscriptionService.createCodes({ planKey, quantity, adminId: ctx.from.id });
+    await render(ctx, `✅ تم إنشاء ${codes.length} كود بنجاح.\n\n\`${codes.join('\n')}\`\n\nالباقة: ${subscriptionService.PLAN_TYPES[Object.keys(subscriptionService.PLAN_TYPES).find((key) => subscriptionService.PLAN_TYPES[key].key === planKey)]?.label || planKey}\nإضافة الحسابات مسموحة بلا حد.`, adminKeyboard());
+  } catch (error) {
+    await render(ctx, '❌ تعذر إنشاء الأكواد. تحقق من البيانات وحاول مرة أخرى.', adminKeyboard());
+  }
 };
 const handleAdminLimitInput = async (ctx) => {
   const state = sessionState.getState(String(ctx.from.id));
