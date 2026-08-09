@@ -1,129 +1,45 @@
-/**
- * Publishing Engine Handlers
- */
-
 const logger = require('../utils/logger');
 const messages = require('../utils/publishMessages');
 const keyboards = require('../utils/publishKeyboards');
-const { adQueries, taskQueries, logQueries } = require('../database/publishDb');
+const { accountQueries } = require('../database/db');
+const { adQueries, taskQueries, logQueries, settingsQueries } = require('../database/publishDb');
+const { joinGroupQueries, folderQueries } = require('../database/joinDb');
 const publishWizardState = require('../services/publishWizardState');
 const { WIZARD_STEPS } = publishWizardState;
-
-/**
- * Utility: safely edit message or send new one
- */
+const { executeTaskStep } = require('../services/publishService');
+const uid = (ctx) => String(ctx.from.id);
 const safeEdit = async (ctx, text, keyboard) => {
-  try {
-    await ctx.editMessageText(text, {
-      parse_mode: 'Markdown',
-      ...keyboard,
-    });
-  } catch (e) {
-    await ctx.reply(text, {
-      parse_mode: 'Markdown',
-      ...keyboard,
-    });
-  }
+  await ctx.answerCbQuery().catch(() => {});
+  try { await ctx.editMessageText(text, { parse_mode: 'Markdown', ...keyboard }); }
+  catch { await ctx.reply(text, { parse_mode: 'Markdown', ...keyboard }); }
 };
+const connectedAccounts = (userId) => accountQueries.getAllByUserId(userId).filter((a) => a.status === 'connected');
+const begin = (userId, step, data = {}) => publishWizardState.setWizardState(userId, step, data);
+const stateData = (userId) => publishWizardState.getWizardState(userId)?.data || {};
+const handlePublishMenu = (ctx) => safeEdit(ctx, messages.publishMenu(), keyboards.publishMenuKeyboard());
+const handleAdsLibrary = async (ctx) => { const ads = adQueries.getAll(uid(ctx)); return safeEdit(ctx, messages.adsLibraryMenu(ads.length), keyboards.adsLibraryKeyboard(ads)); };
+const handleAdAddStart = async (ctx) => { begin(uid(ctx), WIZARD_STEPS.AWAITING_AD_CONTENT); await ctx.answerCbQuery().catch(() => {}); return ctx.reply(messages.addAdPrompt()); };
+const handleAdView = async (ctx, adId) => { const ad = adQueries.getById(adId, uid(ctx)); if (!ad) return ctx.answerCbQuery('الإعلان غير موجود'); return safeEdit(ctx, `*تفاصيل الإعلان:*
 
-const handlePublishMenu = async (ctx) => {
-  await safeEdit(ctx, messages.publishMenu(), keyboards.publishMenuKeyboard());
-};
-
-const handleAdsLibrary = async (ctx) => {
-  const userId = String(ctx.from.id);
-  const ads = adQueries.getAll(userId);
-  await safeEdit(ctx, messages.adsLibraryMenu(ads.length), keyboards.adsLibraryKeyboard(ads));
-};
-
-const handleAdAddStart = async (ctx) => {
-  const userId = String(ctx.from.id);
-  publishWizardState.setWizardState(userId, WIZARD_STEPS.AWAITING_AD_CONTENT);
-  await ctx.answerCbQuery();
-  await ctx.reply(messages.addAdPrompt());
-};
-
-const handleAdView = async (ctx, adId) => {
-  const userId = String(ctx.from.id);
-  const ad = adQueries.getById(adId, userId);
-  if (!ad) return ctx.answerCbQuery('الإعلان غير موجود');
-
-  let text = `*تفاصيل الإعلان:*\n\n` +
-             `النوع: ${ad.type}\n` +
-             `المحتوى: ${ad.text_content || 'لا يوجد'}\n` +
-             `التاريخ: ${ad.created_at}`;
-
-  await safeEdit(ctx, text, keyboards.adViewKeyboard(adId));
-};
-
-const handleDashboard = async (ctx) => {
-  const userId = String(ctx.from.id);
-  // Aggregate stats from logs and tasks
-  const stats = {
-    success: 0,
-    failed: 0,
-    running: 0
-  };
-  
-  // Real implementation would query DB for these counts
-  await safeEdit(ctx, messages.dashboard(stats), keyboards.dashboardKeyboard());
-};
-
-const handlePublishLogs = async (ctx) => {
-  const userId = String(ctx.from.id);
-  const logs = logQueries.getRecent(userId, 10);
-  
-  let text = `📜 *سجل العمليات الأخير:*\n\n`;
-  if (logs.length === 0) {
-    text += `لا توجد عمليات مسجلة حالياً.`;
-  } else {
-    logs.forEach(log => {
-      const icon = log.result === 'success' ? '✅' : '❌';
-      text += `${icon} [${log.created_at}] ${log.target_id}\n`;
-    });
-  }
-
-  await safeEdit(ctx, text, {
-    reply_markup: {
-      inline_keyboard: [[{ text: '⬅️ رجوع', callback_data: 'publish_menu' }]]
-    }
-  });
-};
-
-const handlePublishTextInput = async (ctx) => {
-  const userId = String(ctx.from.id);
-  const state = publishWizardState.getWizardState(userId);
-  if (!state) return;
-
-  const text = ctx.message.text;
-
-  if (state.step === WIZARD_STEPS.AWAITING_AD_CONTENT) {
-    let type = 'text';
-    let mediaFile = null;
-    
-    if (ctx.message.photo) {
-      type = 'image';
-      mediaFile = ctx.message.photo[ctx.message.photo.length - 1].file_id;
-    } else if (ctx.message.document) {
-      type = 'file';
-      mediaFile = ctx.message.document.file_id;
-    }
-
-    adQueries.create(userId, type, text || ctx.message.caption, mediaFile);
-    publishWizardState.resetWizard(userId);
-    await ctx.reply(messages.adSaved());
-    return handleAdsLibrary(ctx);
-  }
-
-  // Handle other steps...
-};
-
-module.exports = {
-  handlePublishMenu,
-  handleAdsLibrary,
-  handleAdAddStart,
-  handleAdView,
-  handleDashboard,
-  handlePublishLogs,
-  handlePublishTextInput
-};
+النوع: ${ad.type}
+المحتوى: ${ad.text_content || 'لا يوجد'}
+التاريخ: ${ad.created_at}`, keyboards.adViewKeyboard(adId)); };
+const handleDashboard = async (ctx) => { const userId = uid(ctx); const logs = logQueries.getRecent(userId, 1000); const tasks = taskQueries.getAll(userId); const stats = { success: logs.filter((x) => x.result === 'success').length, failed: logs.filter((x) => x.result === 'failed').length, running: tasks.filter((x) => x.status === 'running').length }; return safeEdit(ctx, messages.dashboard(stats), keyboards.dashboardKeyboard()); };
+const handlePublishLogs = async (ctx) => { const logs = logQueries.getRecent(uid(ctx), 10); const text = logs.length ? logs.map((l) => `${l.result === 'success' ? '✅' : '❌'} [${l.created_at}] ${l.target_id || '-'} — ${l.detail || ''}`).join('\n') : 'لا توجد عمليات مسجلة حالياً.'; return safeEdit(ctx, `📜 *سجل العمليات الأخير:*\n\n${text}`, { reply_markup: { inline_keyboard: [[{ text: '⬅️ رجوع', callback_data: 'publish_menu' }]] } }); };
+const handleDirectStart = async (ctx) => { const accounts = connectedAccounts(uid(ctx)); if (!accounts.length) return safeEdit(ctx, 'لا يوجد حساب متصل. أضف حسابًا أولًا.', keyboards.publishMenuKeyboard()); begin(uid(ctx), WIZARD_STEPS.DIRECT_ACCOUNTS, { mode: 'direct', accountIds: [], targetIds: [], adIds: [] }); return safeEdit(ctx, '▶️ *بدء النشر*\n\nاختر الحسابات التي ستنفذ النشر:', keyboards.selectAccountsKeyboard(accounts)); };
+const handleAccountsSelect = async (ctx) => { const accounts = accountQueries.getAllByUserId(uid(ctx)); begin(uid(ctx), WIZARD_STEPS.FOLDER_ACCOUNTS, { mode: 'accounts_only', accountIds: [] }); return safeEdit(ctx, `📱 *اختيار الحسابات*\n\nالمتصلة: ${accounts.filter((a) => a.status === 'connected').length} من ${accounts.length}`, keyboards.selectAccountsKeyboard(accounts.filter((a) => a.status === 'connected'), [], 'publish_accounts_done')); };
+const toggleAccount = async (ctx, id) => { const userId = uid(ctx); const state = publishWizardState.getWizardState(userId); if (!state) return ctx.answerCbQuery('انتهت الجلسة، أعد فتح التدفق'); const ids = stateData(userId).accountIds || []; const next = ids.includes(Number(id)) ? ids.filter((x) => x !== Number(id)) : [...ids, Number(id)]; publishWizardState.updateWizardState(userId, { accountIds: next }); const done = stateData(userId).mode === 'accounts_only' ? 'publish_accounts_done' : 'publish_direct_accounts_done'; return safeEdit(ctx, '📱 *اختيار الحسابات*', keyboards.selectAccountsKeyboard(connectedAccounts(userId), next, done)); };
+const accountsDone = async (ctx) => { const userId = uid(ctx); const data = stateData(userId); if (!data.accountIds?.length) return ctx.answerCbQuery('اختر حسابًا واحدًا على الأقل'); if (data.mode === 'accounts_only') { publishWizardState.resetWizard(userId); return safeEdit(ctx, `✅ تم اختيار الحسابات: ${data.accountIds.join(', ')}\n\nيمكنك الآن بدء النشر أو فتح الجدولة.`, keyboards.publishMenuKeyboard()); } if (data.mode === 'folder') return safeEdit(ctx, '3️⃣ *اختيار الإعلان*', keyboards.selectAdsKeyboard(adQueries.getAll(userId), 'publish_folder_ad_select_')); publishWizardState.updateWizardState(userId, { step: WIZARD_STEPS.DIRECT_TARGETS }); return safeEdit(ctx, '2️⃣ *اختيار الوجهات*', keyboards.selectTargetsKeyboard(joinGroupQueries.getAllByUserId(userId), data.targetIds || [])); };
+const toggleTarget = async (ctx, id) => { const userId = uid(ctx); const data = stateData(userId); const sid = String(id); const ids = data.targetIds || []; const next = ids.includes(sid) ? ids.filter((x) => x !== sid) : [...ids, sid]; publishWizardState.updateWizardState(userId, { targetIds: next }); return safeEdit(ctx, '2️⃣ *اختيار الوجهات*', keyboards.selectTargetsKeyboard(joinGroupQueries.getAllByUserId(userId), next)); };
+const manualTarget = async (ctx) => { publishWizardState.updateWizardState(uid(ctx), { step: WIZARD_STEPS.AWAITING_MANUAL_TARGET }); return ctx.reply('أرسل رابط المجموعة أو القناة أو username.'); };
+const targetsDone = async (ctx) => { const userId = uid(ctx); const data = stateData(userId); if (!data.targetIds?.length) return ctx.answerCbQuery('اختر وجهة واحدة على الأقل'); publishWizardState.updateWizardState(userId, { step: WIZARD_STEPS.DIRECT_AD }); return safeEdit(ctx, '3️⃣ *اختيار الإعلان*', keyboards.selectAdsKeyboard(adQueries.getAll(userId))); };
+const createAndRunTask = async (ctx, data, name) => { const userId = uid(ctx); const row = taskQueries.create(userId, { name, mode: 'direct', account_ids: JSON.stringify(data.accountIds), target_type: data.mode === 'folder' ? 'folders' : 'groups', target_ids: JSON.stringify(data.targetIds), ad_ids: JSON.stringify(data.adIds), status: 'running', next_run_at: new Date().toISOString(), interval_seconds: 60 }); try { const task = taskQueries.getById(row.lastInsertRowid, userId); await executeTaskStep(task); taskQueries.update(task.id, userId, { status: 'stopped', last_run_at: new Date().toISOString() }); return safeEdit(ctx, `✅ بدأ النشر وانتهت العملية الأولى.\nمعرّف العملية: #${task.id}`, keyboards.publishMenuKeyboard()); } catch (error) { logger.error(`Direct publish failed: ${error.stack || error.message}`); taskQueries.update(row.lastInsertRowid, userId, { status: 'failed' }); return safeEdit(ctx, '❌ تعذر بدء النشر. راجع سجل العمليات.', keyboards.publishMenuKeyboard()); } finally { publishWizardState.reset(userId); } };
+const selectAd = async (ctx, id, mode = 'direct') => { const userId = uid(ctx); const data = stateData(userId); const ad = adQueries.getById(id, userId); if (!ad) return ctx.answerCbQuery('الإعلان غير موجود'); return createAndRunTask(ctx, { ...data, adIds: [Number(id)] }, mode === 'folder' ? 'نشر روابط المجلدات' : 'نشر مباشر'); };
+const handleFoldersStart = async (ctx) => { const folders = folderQueries.getAllByUserId(uid(ctx)).filter((f) => f.invite_link && ['جاهز للمشاركة', 'مكتمل', 'ready', 'completed'].includes(f.status)); if (!folders.length) return safeEdit(ctx, 'لا توجد مجلدات جاهزة تحتوي على رابط مشاركة.', keyboards.publishMenuKeyboard()); return safeEdit(ctx, '📂 *اختر مجلدًا لنشر رابطه:*', keyboards.foldersKeyboard(folders)); };
+const selectFolder = async (ctx, id) => { const userId = uid(ctx); const folder = folderQueries.getById(id); if (!folder || folder.user_id !== userId || !folder.invite_link) return ctx.answerCbQuery('المجلد غير صالح أو لا يحتوي رابطًا'); const accounts = connectedAccounts(userId); if (!accounts.length) return safeEdit(ctx, 'لا يوجد حساب متصل. أضف حسابًا أولًا.', keyboards.publishMenuKeyboard()); begin(userId, WIZARD_STEPS.FOLDER_ACCOUNTS, { mode: 'folder', folderId: id, accountIds: [], targetIds: [folder.invite_link], adIds: [] }); return safeEdit(ctx, '📂 تم اختيار المجلد. اختر الحسابات:', keyboards.selectAccountsKeyboard(accounts, [], 'publish_direct_accounts_done')); };
+const handleSettings = async (ctx) => { const current = settingsQueries.get(uid(ctx)); return safeEdit(ctx, `⚙️ *إعدادات النشر*\n\nحالة المحرك: ${current.enabled ? 'مفعل' : 'متوقف'}\nالتأخير الافتراضي: ${current.default_delay_seconds} ثانية\n\nالإعدادات محفوظة وتستمر بعد إعادة تشغيل البوت.`, keyboards.settingsKeyboard(current)); };
+const toggleSetting = async (ctx) => { const userId = uid(ctx); const current = settingsQueries.get(userId); settingsQueries.update(userId, { enabled: current.enabled ? 0 : 1 }); return handleSettings(ctx); };
+const cycleDelay = async (ctx) => { const userId = uid(ctx); const current = settingsQueries.get(userId); const next = ({ 0: 5, 5: 15, 15: 60, 60: 0 })[current.default_delay_seconds] ?? 5; settingsQueries.update(userId, { default_delay_seconds: next }); return handleSettings(ctx); };
+const handlePublishTextInput = async (ctx) => { const userId = uid(ctx); const state = publishWizardState.getWizardState(userId); if (!state || !ctx.message?.text) return; const text = ctx.message.text.trim(); if (state.step === WIZARD_STEPS.AWAITING_AD_CONTENT) { adQueries.create(userId, 'text', text, null); publishWizardState.resetWizard(userId); await ctx.reply(messages.adSaved()); return handleAdsLibrary(ctx); } if (state.step === WIZARD_STEPS.AWAITING_MANUAL_TARGET) { publishWizardState.updateWizardState(userId, { step: WIZARD_STEPS.DIRECT_TARGETS, targetIds: [...(state.data.targetIds || []), text] }); return ctx.reply('تمت إضافة الوجهة.', keyboards.selectTargetsKeyboard(joinGroupQueries.getAllByUserId(userId), [...(state.data.targetIds || []), text])); } };
+const handleCancel = async (ctx) => { publishWizardState.resetWizard(uid(ctx)); return handlePublishMenu(ctx); };
+module.exports = { handlePublishMenu, handleAdsLibrary, handleAdAddStart, handleAdView, handleDashboard, handlePublishLogs, handlePublishTextInput, handleDirectStart, handleAccountsSelect, toggleAccount, accountsDone, toggleTarget, manualTarget, targetsDone, selectAd, handleFoldersStart, selectFolder, handleSettings, toggleSetting, cycleDelay, handleCancel };

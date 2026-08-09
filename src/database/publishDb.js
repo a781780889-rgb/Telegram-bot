@@ -57,7 +57,17 @@ const initPublishSchema = () => {
     );
   `);
 
-  // 3. Publish Logs
+  // 3. Publish Engine Settings
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS publish_settings (
+      user_id TEXT PRIMARY KEY,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      default_delay_seconds INTEGER NOT NULL DEFAULT 5,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  // 4. Publish Logs
   db.exec(`
     CREATE TABLE IF NOT EXISTS publish_logs (
       id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -153,6 +163,27 @@ const taskQueries = {
   }
 };
 
+const settingsQueries = {
+  get: (userId) => {
+    const db = getDb();
+    let row = db.prepare('SELECT * FROM publish_settings WHERE user_id = ?').get(String(userId));
+    if (!row) {
+      db.prepare('INSERT INTO publish_settings (user_id) VALUES (?)').run(String(userId));
+      row = db.prepare('SELECT * FROM publish_settings WHERE user_id = ?').get(String(userId));
+    }
+    return { enabled: Boolean(row.enabled), default_delay_seconds: Number(row.default_delay_seconds) };
+  },
+  update: (userId, data) => {
+    const allowed = ['enabled', 'default_delay_seconds'];
+    const fields = allowed.filter((key) => data[key] !== undefined).map((key) => `${key} = ?`);
+    if (!fields.length) return settingsQueries.get(userId);
+    const values = allowed.filter((key) => data[key] !== undefined).map((key) => data[key]);
+    values.push(String(userId));
+    getDb().prepare(`UPDATE publish_settings SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`).run(...values);
+    return settingsQueries.get(userId);
+  },
+};
+
 const logQueries = {
   add: (userId, taskId, accountId, targetId, adId, result, detail) => {
     const stmt = getDb().prepare(`
@@ -184,5 +215,6 @@ module.exports = {
   initPublishSchema,
   adQueries,
   taskQueries,
-  logQueries
+  logQueries,
+  settingsQueries
 };

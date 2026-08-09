@@ -140,6 +140,20 @@ const {
   handleAdView,
   handleDashboard,
   handlePublishLogs,
+  handleDirectStart,
+  handleAccountsSelect,
+  toggleAccount,
+  accountsDone,
+  toggleTarget,
+  manualTarget,
+  targetsDone,
+  selectAd,
+  handleFoldersStart,
+  selectFolder,
+  handleSettings,
+  toggleSetting,
+  cycleDelay,
+  handleCancel: handlePublishCancel,
 } = require('./handlers/publishMenu');
 const { startPublishScheduler } = require('./services/publishService');
 const scheduleMenu = require('./handlers/scheduleMenu');
@@ -407,6 +421,22 @@ bot.action('publish_ad_add', handleAdAddStart);
 bot.action('publish_dashboard', handleDashboard);
 bot.action('publish_dashboard_refresh', handleDashboard);
 bot.action('publish_logs', handlePublishLogs);
+bot.action('publish_direct_start', handleDirectStart);
+bot.action('publish_folders_start', handleFoldersStart);
+bot.action('publish_accounts_select', handleAccountsSelect);
+bot.action('publish_settings', handleSettings);
+bot.action('publish_cancel', handlePublishCancel);
+bot.action('publish_direct_accounts_done', accountsDone);
+bot.action('publish_accounts_done', accountsDone);
+bot.action('publish_direct_targets_done', targetsDone);
+bot.action('publish_target_manual', manualTarget);
+bot.action('publish_settings_toggle_enabled', toggleSetting);
+bot.action('publish_settings_cycle_delay', cycleDelay);
+bot.action(/^publish_account_toggle_(\d+)$/, (ctx) => toggleAccount(ctx, Number(ctx.match[1])));
+bot.action(/^publish_target_toggle_(.+)$/, (ctx) => toggleTarget(ctx, ctx.match[1]));
+bot.action(/^publish_ad_select_(\d+)$/, (ctx) => selectAd(ctx, Number(ctx.match[1]), 'direct'));
+bot.action(/^publish_folder_ad_select_(\d+)$/, (ctx) => selectAd(ctx, Number(ctx.match[1]), 'folder'));
+bot.action(/^publish_folder_select_(\d+)$/, (ctx) => selectFolder(ctx, Number(ctx.match[1])));
 
 // ─── Persistent Publish Scheduling ───────────────────────────────────────────
 bot.action('publish_schedule_start', async (ctx) => {
