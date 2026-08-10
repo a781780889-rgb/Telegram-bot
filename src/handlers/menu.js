@@ -13,23 +13,30 @@ const handleStart = async (ctx) => {
   try {
     const { id, username, first_name } = ctx.from;
 
-    // Register/update user in DB
-    botUserQueries.upsert(id, username, first_name);
-
-    // Reset any pending state
+    // Reset any pending state first (non-blocking)
     sessionState.resetState(String(id));
 
+    // Send the reply immediately before any DB operations
     await ctx.reply(welcomeMessage(first_name), {
       parse_mode: 'Markdown',
       ...mainMenuKeyboard(),
     }).catch(async (err) => {
       logger.error('handleStart reply error (Markdown):', err);
       // Fallback to plain text if Markdown fails
-      await ctx.reply(`مرحبًا ${first_name || ''} 👋\n\nأنا بوت إدارة حسابات تيليجرام. اختر أحد الخيارات أدناه:`, mainMenuKeyboard());
+      await ctx.reply(`مرحبًا ${first_name || ''} 👋\n\nأنا بوت إدارة حسابات تيليجرام. اختر أحد الخيارات أدناه:`, mainMenuKeyboard()).catch(() => {});
+    });
+
+    // Register/update user in DB after replying (non-blocking)
+    setImmediate(() => {
+      try {
+        botUserQueries.upsert(id, username, first_name);
+      } catch (dbErr) {
+        logger.error('handleStart DB upsert error:', dbErr.message);
+      }
     });
   } catch (error) {
     logger.error('handleStart fatal error:', error);
-    await ctx.reply('مرحبًا! اضغط /start لبدء البوت.', mainMenuKeyboard());
+    await ctx.reply('مرحبًا! اضغط /start لبدء البوت.', mainMenuKeyboard()).catch(() => {});
   }
 };
 
