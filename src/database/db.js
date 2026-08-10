@@ -226,6 +226,14 @@ const initializeSchema = () => {
   } catch (error) {
     logger.error('Failed to initialize publishing engine schema:', error);
   }
+
+  // Lazy-import deduplicateDb
+  try {
+    const { initDeduplicateSchema } = require('./deduplicateDb');
+    initDeduplicateSchema();
+  } catch (error) {
+    logger.error('Failed to initialize deduplicate schema:', error);
+  }
 };
 
 // ─── Account Queries ──────────────────────────────────────────────────────────
