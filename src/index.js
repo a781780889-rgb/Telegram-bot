@@ -171,6 +171,28 @@ const {
 
 const { restoreAllAccounts } = require('./services/sessionRestoreService');
 
+const {
+  handleDeduplicateMenu,
+  handleDeduplicateStartSelect,
+  handleDeduplicateToggleAccount,
+  handleDeduplicateSelectAll,
+  handleDeduplicateDeselectAll,
+  handleDeduplicateConfirmStart,
+  handleDeduplicateExecuteStart,
+  handleDeduplicateLiveDashboard,
+  handleDeduplicatePause,
+  handleDeduplicateResume,
+  handleDeduplicateStopConfirm,
+  handleDeduplicateStopExecute,
+  handleDeduplicateStatistics,
+  handleDeduplicateDuplicates,
+  handleDeduplicateLogs,
+  handleDeduplicateSettings,
+  handleDeduplicateToggleSetting,
+  handleDeduplicateReport,
+  handleDeduplicateFailedOps,
+} = require('./handlers/deduplicateMenu');
+
 // ─── Validate required environment variables ──────────────────────────────────
 
 const requiredEnvVars = ['BOT_TOKEN', 'API_ID', 'API_HASH', 'ENCRYPTION_KEY'];
@@ -404,6 +426,43 @@ bot.action('join_settings_summary',    async (ctx) => handleJoinSettingsSection(
 // Settings edit & toggle (catch-all regex — must come after specific patterns above)
 bot.action(/^join_edit_(.+)$/,   async (ctx) => handleJoinEditSetting(ctx, ctx.match[1]));
 bot.action(/^join_toggle_(.+)$/, async (ctx) => handleJoinToggleSetting(ctx, ctx.match[1]));
+
+// ─── Deduplicate System Callbacks ────────────────────────────────────────────
+
+bot.action('dedup_menu',            handleDeduplicateMenu);
+bot.action('dedup_start_select',    handleDeduplicateStartSelect);
+bot.action('dedup_select_all',      handleDeduplicateSelectAll);
+bot.action('dedup_deselect_all',    handleDeduplicateDeselectAll);
+bot.action('dedup_confirm_start',   handleDeduplicateConfirmStart);
+bot.action('dedup_execute_start',   handleDeduplicateExecuteStart);
+bot.action('dedup_live_dashboard',  handleDeduplicateLiveDashboard);
+bot.action('dedup_pause',           handleDeduplicatePause);
+bot.action('dedup_resume',          handleDeduplicateResume);
+bot.action('dedup_stop_confirm',    handleDeduplicateStopConfirm);
+bot.action('dedup_stop_execute',    handleDeduplicateStopExecute);
+bot.action('dedup_statistics',      handleDeduplicateStatistics);
+bot.action('dedup_duplicates',      (ctx) => handleDeduplicateDuplicates(ctx, 0));
+bot.action('dedup_logs',            (ctx) => handleDeduplicateLogs(ctx, 0));
+bot.action('dedup_settings',        handleDeduplicateSettings);
+bot.action('dedup_report',          handleDeduplicateReport);
+bot.action('dedup_failed_ops',      handleDeduplicateFailedOps);
+bot.action('dedup_noop',            async (ctx) => { try { await ctx.answerCbQuery(); } catch (_) {} });
+
+bot.action(/^dedup_toggle_account_(\d+)$/, async (ctx) => {
+  await handleDeduplicateToggleAccount(ctx, parseInt(ctx.match[1], 10));
+});
+
+bot.action(/^dedup_dupes_page_(\d+)$/, async (ctx) => {
+  await handleDeduplicateDuplicates(ctx, parseInt(ctx.match[1], 10));
+});
+
+bot.action(/^dedup_logs_page_(\d+)$/, async (ctx) => {
+  await handleDeduplicateLogs(ctx, parseInt(ctx.match[1], 10));
+});
+
+bot.action(/^dedup_settings_toggle_(.+)$/, async (ctx) => {
+  await handleDeduplicateToggleSetting(ctx, ctx.match[1]);
+});
 
 // ─── Central Groups DB + Telegram Folders Callbacks ───────────────────────────
 
