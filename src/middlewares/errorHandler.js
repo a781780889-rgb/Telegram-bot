@@ -4,6 +4,9 @@ const { mainMenuKeyboard } = require('../utils/keyboards');
 /**
  * Global error handler for the Telegraf bot
  * Catches unhandled errors from handlers and middlewares
+ *
+ * FIX: يحاول editMessageText أولاً عند callback queries
+ *      لتجنب ظهور قائمة مكررة
  */
 const errorHandler = (err, ctx) => {
   logger.error('Unhandled bot error:', {
@@ -17,10 +20,14 @@ const errorHandler = (err, ctx) => {
 
   try {
     if (ctx?.callbackQuery) {
-      ctx.answerCbQuery('حدث خطأ').catch(() => {});
-      ctx
-        .reply(errorMessage, mainMenuKeyboard())
-        .catch(() => {});
+      // أجب على الـ callback أولاً لإزالة حالة التحميل
+      ctx.answerCbQuery('⚠️ حدث خطأ').catch(() => {});
+      // عدّل الرسالة الحالية بدلاً من إرسال جديدة
+      ctx.editMessageText(errorMessage, { parse_mode: 'Markdown' })
+        .catch(() => {
+          // إذا فشل التعديل (رسالة قديمة جداً)، أرسل جديدة
+          ctx.reply(errorMessage, mainMenuKeyboard()).catch(() => {});
+        });
     } else if (ctx?.message) {
       ctx.reply(errorMessage, mainMenuKeyboard()).catch(() => {});
     }
