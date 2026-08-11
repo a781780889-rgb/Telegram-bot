@@ -17,12 +17,11 @@ let _dbInitialized = false;
 const getDb = () => {
   if (!db) {
     if (process.env.DATABASE_URL) {
-      // FIX: إذا فشل الاتصال نترك db=undefined ونرمي الخطأ
-      // حتى لا يُعاد استدعاء getDb بـ db ناقص
-      const instance = new PgCompat(process.env.DATABASE_URL, {
+      // عند الفشل يرمي PgCompat خطأً — db يبقى undefined
+      // فيُعيد getDb() المحاولة في الاستدعاء التالي
+      db = new PgCompat(process.env.DATABASE_URL, {
         ssl: process.env.DATABASE_SSL !== 'false',
       });
-      db = instance; // نُعيّن فقط بعد نجاح الاتصال
       logger.info('Using PostgreSQL database from DATABASE_URL.');
     } else {
       db = new SQLiteDatabase(dbPath);
@@ -31,7 +30,7 @@ const getDb = () => {
       logger.warn('DATABASE_URL is not set; using local SQLite database.');
     }
   }
-  // تهيئة الـ schema مرة واحدة فقط
+  // تهيئة الـ schema مرة واحدة فقط بعد نجاح الاتصال
   if (db && !_dbInitialized) {
     _dbInitialized = true;
     initializeSchema();

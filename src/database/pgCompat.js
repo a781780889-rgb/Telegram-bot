@@ -49,9 +49,14 @@ const { Client } = require('pg');
   const sharedResult = new Int32Array(workerData.sharedResult);
   const { port }     = workerData;
 
+  // Railway PostgreSQL: نُجبر SSL مع rejectUnauthorized:false
+  // ونُزيل sslmode من الـ URL إذا كان موجوداً (يتعارض مع خيار ssl)
+  const connStr = (workerData.connectionString || '')
+    .replace(/[?&]sslmode=[^&]*/g, '');
+
   const client = new Client({
-    connectionString: workerData.connectionString,
-    ssl: workerData.ssl,
+    connectionString: connStr,
+    ssl: { rejectUnauthorized: false },
     connectionTimeoutMillis: 30000,
     statement_timeout: 30000,
   });
@@ -178,38 +183,52 @@ class PgSyncClient {
 
 let _sharedClient = null;
 let _lastConnStr  = null;
+let _connecting   = false; // منع التزامن
 
 /**
  * يُعيد الـ singleton، وينشئه إذا لم يكن موجوداً.
- * عند فشل الاتصال (connection timeout) يُعيد المحاولة 3 مرات.
+ * إذا فشل الاتصال السابق (_sharedClient === null) يُعيد المحاولة.
+ * عند فشل كل المحاولات يرمي الخطأ — المُستدعي يُقرر ماذا يفعل.
  */
 function getSharedClient(connectionString, ssl) {
-  // إذا تغيّر الـ connection string (نادر) أنشئ client جديد
   if (_sharedClient && _lastConnStr === connectionString) {
     return _sharedClient;
   }
 
+  // إذا كان هناك اتصال جارٍ في نفس الـ process، انتظر
+  if (_connecting) {
+    const wait = Date.now() + 35000;
+    while (_connecting && Date.now() < wait) {
+      const p = Date.now() + 100;
+      while (Date.now() < p) { /* busy-wait */ }
+    }
+    if (_sharedClient) return _sharedClient;
+  }
+
+  _connecting = true;
   const MAX_RETRIES = 3;
   let lastErr;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       console.log(`[pgCompat] Connecting to PostgreSQL… attempt ${attempt}/${MAX_RETRIES}`);
-      _sharedClient = new PgSyncClient(connectionString, ssl);
+      const client = new PgSyncClient(connectionString, ssl);
+      _sharedClient = client;
       _lastConnStr  = connectionString;
+      _connecting   = false;
       console.log('[pgCompat] Connected ✓');
       return _sharedClient;
     } catch (err) {
       lastErr = err;
       console.error(`[pgCompat] Connection attempt ${attempt} failed: ${err.message}`);
       if (attempt < MAX_RETRIES) {
-        // انتظر 2 ثانية قبل إعادة المحاولة (busy-wait خفيف)
-        const pause = Date.now() + 2000;
-        while (Date.now() < pause) { /* wait */ }
+        const pause = Date.now() + 3000;
+        while (Date.now() < pause) { /* wait 3s */ }
       }
     }
   }
 
+  _connecting = false;
   throw lastErr;
 }
 
