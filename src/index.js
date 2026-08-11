@@ -644,6 +644,20 @@ const startBot = async () => {
   try {
     logger.info('Starting Telegram Account Manager Bot...');
 
+    // ── تهيئة قاعدة البيانات مبكراً ─────────────────────────────────────────
+    // يُنشئ الاتصال بـ PostgreSQL فوراً عند بدء البوت بدلاً من الانتظار
+    // حتى أول callback query (والذي ينتهي بـ 400: query too old).
+    if (process.env.DATABASE_URL) {
+      try {
+        const { getDb } = require('./database/db');
+        getDb();
+        logger.info('Database connection established at startup.');
+      } catch (dbErr) {
+        logger.error('Failed to connect to database at startup:', dbErr.message);
+        process.exit(1);
+      }
+    }
+
     // ── معالجة خطأ 409 Conflict ──────────────────────────────────────────────
     // يحدث هذا الخطأ حين تُطلق Railway نسخة جديدة قبل أن تتوقف النسخة القديمة
     // تمامًا (Rolling Deploy). بدلاً من تعطيل البوت بالكامل، ننتظر ونعيد المحاولة.
