@@ -83,6 +83,7 @@ const MIN_RESEND_GAP_MS = 60 * 1000;
  */
 const lastResendAt = new Map();
 const MIN_RESEND_BUTTON_GAP_MS = 30 * 1000;
+const APP_ONLY_OTP_ERROR = 'OTP_APP_ONLY_REQUIRED';
 
 // ─── Composite key helper ─────────────────────────────────────────────────────
 
@@ -103,6 +104,22 @@ const authLog = (step, userId, phone, extra = {}) => {
     .join(' ');
   logger.info(extras ? `${base} ${extras}` : base);
 };
+
+/**
+ * Cancel a code that was delivered through a channel the bot does not accept.
+ * Never log the phone-code hash.
+ */
+const cancelPendingCode = async (client, phone, phoneCodeHash) => {
+  if (!phoneCodeHash) return;
+  try {
+    await client.invoke(new Api.auth.CancelCode({ phoneNumber: phone, phoneCodeHash }));
+  } catch (error) {
+    logger.warn('Failed to cancel non-app OTP:', error?.message?.slice(0, 100));
+  }
+};
+
+const isAppDelivery = (result) =>
+  result?.isCodeViaApp === true || result?.type instanceof Api.auth.SentCodeTypeApp;
 
 // ─── Error translation ────────────────────────────────────────────────────────
 
@@ -127,6 +144,9 @@ const translateTelegramError = (error) => {
   if (msg.includes('LOCAL_RESEND_THROTTLED')) {
     const sec = msg.split(':')[1] || 'بضع';
     return `⏱ الرجاء الانتظار ${sec} ثانية قبل طلب رمز جديد لنفس الرقم (منعًا من تجاهل تيليجرام للطلب المتكرر).`;
+  }
+  if (msg.includes(APP_ONLY_OTP_ERROR)) {
+    return '⚠️ لم يرسل تيليجرام الرمز داخل التطبيق هذه المرة، لذلك لم يتم قبول SMS أو المكالمة. افتح الحساب في تطبيق تيليجرام على جهاز تملكه، ثم ابدأ إضافة الحساب من جديد.';
   }
   if (msg.includes('SEND_CODE_UNAVAILABLE')) {
     return 'تيليجرام لا يتيح تغيير طريقة إرسال الرمز لهذا الرقم حاليًا. إذا كان الرقم مسجَّلاً في تطبيق تيليجرام على جهاز آخر، افتح الإعدادات ← الأجهزة النشطة وأنهِ الجلسات الأخرى، ثم اضغط "لم يصلني الرمز" مرة أخرى.';
@@ -231,6 +251,12 @@ const sendOtp = async (userId, phone, accountId, { skipThrottle = false } = {}) 
   }
 
   const channel = result.isCodeViaApp ? 'telegram-app' : 'sms/call';
+  if (!result.isCodeViaApp) {
+    await cancelPendingCode(client, phone, result.phoneCodeHash);
+    try { await client.disconnect(); } catch (_) {}
+    authLog('OTP_REJECTED_NON_APP', userId, phone, { channel, accountId });
+    throw new Error(APP_ONLY_OTP_ERROR);
+  }
   authLog('OTP_REQUESTED', userId, phone, { channel, accountId });
 
   pendingSessions.set(key, {
@@ -293,19 +319,27 @@ const resendOtp = async (userId, phone) => {
       new Api.auth.ResendCode({ phoneNumber: phone, phoneCodeHash })
     );
 
+    const deliveredViaApp = isAppDelivery(result);
+    const channel = deliveredViaApp ? 'telegram-app' : 'sms/call';
+    if (!deliveredViaApp) {
+      await cancelPendingCode(client, phone, result.phoneCodeHash);
+      await cleanupPending(userId, phone);
+      authLog('OTP_REJECTED_NON_APP', userId, phone, { channel, via: 'resend' });
+      throw new Error(APP_ONLY_OTP_ERROR);
+    }
+
     // ATOMIC UPDATE: update phoneCodeHash in the existing session.
     // verifyOtp will always find a valid session with the latest hash.
     pending.phoneCodeHash = result.phoneCodeHash;
-    pending.isCodeViaApp  = result.isCodeViaApp;
+    pending.isCodeViaApp  = deliveredViaApp;
     pendingSessions.set(key, pending);
 
     // Update resend throttle only (not sendOtp throttle).
     lastResendAt.set(key, Date.now());
 
-    const channel = result.isCodeViaApp ? 'telegram-app' : 'sms/call';
     authLog('PHONE_CODE_HASH_UPDATED', userId, phone, { channel, via: 'resend' });
 
-    return { isCodeViaApp: result.isCodeViaApp };
+    return { isCodeViaApp: deliveredViaApp };
 
   } catch (error) {
     const isUnavailable =
@@ -345,13 +379,23 @@ const resendOtp = async (userId, phone) => {
       throw sendErr;
     }
 
+    const fallbackDeliveredViaApp = isAppDelivery(newResult);
+    const fallbackChannel = fallbackDeliveredViaApp ? 'telegram-app' : 'sms/call';
+    if (!fallbackDeliveredViaApp) {
+      await cancelPendingCode(newClient, phone, newResult.phoneCodeHash);
+      try { await newClient.disconnect(); } catch (_) {}
+      await cleanupPending(userId, phone);
+      authLog('OTP_REJECTED_NON_APP', userId, phone, { channel: fallbackChannel, via: 'resend-fallback' });
+      throw new Error(APP_ONLY_OTP_ERROR);
+    }
+
     // New session ready — disconnect old client THEN swap.
     const oldClient = pending.client;
     pendingSessions.set(key, {
       client:             newClient,
       session:            newSession,
       phoneCodeHash:      newResult.phoneCodeHash,
-      isCodeViaApp:       newResult.isCodeViaApp,
+      isCodeViaApp:       fallbackDeliveredViaApp,
       isPasswordRequired: false,
       phone,
       userId,
@@ -366,10 +410,9 @@ const resendOtp = async (userId, phone) => {
     // Disconnect old client after session is swapped.
     try { await oldClient.disconnect(); } catch (_) {}
 
-    const channel = newResult.isCodeViaApp ? 'telegram-app' : 'sms/call';
-    authLog('PHONE_CODE_HASH_UPDATED', userId, phone, { channel, via: 'resend-fallback' });
+    authLog('PHONE_CODE_HASH_UPDATED', userId, phone, { channel: fallbackChannel, via: 'resend-fallback' });
 
-    return { isCodeViaApp: newResult.isCodeViaApp };
+    return { isCodeViaApp: fallbackDeliveredViaApp };
   }
 };
 

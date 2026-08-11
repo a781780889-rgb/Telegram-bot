@@ -49,7 +49,7 @@ const cancelKeyboard = () =>
  */
 const otpKeyboard = () =>
   Markup.inlineKeyboard([
-    [Markup.button.callback('📩 لم يصلني الرمز', 'resend_otp')],
+    [Markup.button.callback('🔄 إعادة المحاولة عبر Telegram', 'resend_otp')],
     [Markup.button.callback('❌ إلغاء', 'cancel_flow')],
   ]);
 
