@@ -1,18 +1,17 @@
 /**
  * pgCompat.js — PostgreSQL wrapper يحاكي better-sqlite3 API (sync)
  *
- * يستخدم worker_threads + Atomics.wait لتنفيذ PostgreSQL queries
- * بشكل متزامن حقيقي بدون حجب event loop.
+ * يستخدم deasync لتشغيل PostgreSQL queries بشكل synchronous
+ * بدون حجب event loop — هذا هو الأسلوب الصحيح في Node.js.
  *
- * FIX v2:
- *  1. singleton على مستوى الـ module (لا يُنشأ client جديد بعد الأول)
- *  2. timeout الاتصال مرفوع لـ 30 ثانية (Railway cold start)
- *  3. إعادة المحاولة التلقائية 3 مرات عند فشل الاتصال
+ * السبب: Atomics.wait محظور في main thread في Node.js 18+
+ *         deasync يحل هذه المشكلة تماماً.
  */
 
 'use strict';
 
-const { Worker, receiveMessageOnPort, MessageChannel } = require('worker_threads');
+const { Client } = require('pg');
+const deasync    = require('deasync');
 
 // ─── SQL Conversion ───────────────────────────────────────────────────────────
 
@@ -37,198 +36,92 @@ const placeholders = (sql) => {
   return sql.replace(/\?/g, () => `$${++i}`);
 };
 
-// ─── Worker Code (inline) ─────────────────────────────────────────────────────
+// ─── Sync wrapper باستخدام deasync ───────────────────────────────────────────
 
-const WORKER_CODE = `
-'use strict';
-const { workerData, parentPort, receiveMessageOnPort } = require('worker_threads');
-const { Client } = require('pg');
+/**
+ * تحويل دالة async إلى sync باستخدام deasync
+ * @param {Function} asyncFn - دالة async تعيد Promise
+ * @returns {*} نتيجة الدالة
+ */
+function runSync(asyncFn) {
+  let done = false;
+  let result;
+  let error;
 
-(async () => {
-  const sharedCmd    = new Int32Array(workerData.sharedCmd);
-  const sharedResult = new Int32Array(workerData.sharedResult);
-  const { port }     = workerData;
+  asyncFn()
+    .then((r) => { result = r; done = true; })
+    .catch((e) => { error = e;  done = true; });
 
-  // Railway PostgreSQL: نُجبر SSL مع rejectUnauthorized:false
-  // ونُزيل sslmode من الـ URL إذا كان موجوداً (يتعارض مع خيار ssl)
-  const connStr = (workerData.connectionString || '')
-    .replace(/[?&]sslmode=[^&]*/g, '');
+  // deasync يُشغّل event loop حتى تكتمل العملية
+  deasync.loopWhile(() => !done);
 
-  const client = new Client({
-    connectionString: connStr,
-    ssl: { rejectUnauthorized: false },
-    connectionTimeoutMillis: 30000,
-    statement_timeout: 30000,
-  });
-
-  try {
-    await client.connect();
-  } catch (err) {
-    port.postMessage({ type: 'fatal', message: err.message });
-    return;
-  }
-
-  port.postMessage({ type: 'ready' });
-
-  while (true) {
-    Atomics.wait(sharedCmd, 0, 0);
-    Atomics.store(sharedCmd, 0, 0);
-
-    const incoming = receiveMessageOnPort(port);
-    if (!incoming) continue;
-
-    const msg = incoming.message;
-    if (msg.type === 'close') { await client.end().catch(() => {}); process.exit(0); }
-
-    let response;
-    try {
-      const result = await client.query(msg.sql, msg.params || []);
-      response = { type: 'result', id: msg.id, rows: result.rows, rowCount: result.rowCount };
-    } catch (err) {
-      response = { type: 'error', id: msg.id, message: err.message, code: err.code };
-    }
-
-    port.postMessage(response);
-    Atomics.store(sharedResult, 0, 1);
-    Atomics.notify(sharedResult, 0);
-  }
-})();
-`;
+  if (error) throw error;
+  return result;
+}
 
 // ─── PgSyncClient ─────────────────────────────────────────────────────────────
 
 class PgSyncClient {
   constructor(connectionString, ssl) {
-    this._connectionString = connectionString;
-    this._ssl = ssl;
-    this._connect();
-  }
+    // Railway internal hostname لا يدعم SSL
+    const connStr = (connectionString || '')
+      .replace(/[?&]sslmode=[^&]*/g, '');
 
-  _connect() {
-    const sabCmd    = new SharedArrayBuffer(4);
-    const sabResult = new SharedArrayBuffer(4);
-    this._sharedCmd    = new Int32Array(sabCmd);
-    this._sharedResult = new Int32Array(sabResult);
-    this._msgId = 0;
+    const isInternal = connStr.includes('.railway.internal') ||
+                       connStr.includes('.internal:');
+    const sslConfig  = isInternal ? false : { rejectUnauthorized: false };
 
-    const { port1, port2 } = new MessageChannel();
-    this._port = port1;
-
-    this._worker = new Worker(WORKER_CODE, {
-      eval: true,
-      workerData: {
-        connectionString: this._connectionString,
-        ssl: this._ssl === false ? false : { rejectUnauthorized: false },
-        port: port2,
-        sharedCmd:    sabCmd,
-        sharedResult: sabResult,
-      },
-      transferList: [port2],
+    this._client = new Client({
+      connectionString: connStr,
+      ssl: sslConfig,
+      connectionTimeoutMillis: 30000,
     });
 
-    // انتظر ready — مرفوع لـ 30 ثانية لاستيعاب Railway cold start
-    let ready = false;
-    let fatalError = null;
-    this._worker.on('message', (m) => {
-      if (m.type === 'ready') ready = true;
-      if (m.type === 'fatal') fatalError = m.message;
-    });
-
-    const deadline = Date.now() + 30000;
-    while (!ready && !fatalError && Date.now() < deadline) {
-      Atomics.wait(this._sharedResult, 0, 0, 200);
-    }
-
-    if (fatalError) throw new Error(`PgSyncClient: ${fatalError}`);
-    if (!ready) throw new Error('PgSyncClient: connection timeout after 30s');
+    // اتصال synchronous
+    runSync(() => this._client.connect());
+    console.log('[pgCompat] Connected to PostgreSQL ✓');
   }
 
   query(sql, params = []) {
-    const id = ++this._msgId;
-
-    Atomics.store(this._sharedResult, 0, 0);
-    this._port.postMessage({ type: 'query', id, sql, params });
-    Atomics.store(this._sharedCmd, 0, 1);
-    Atomics.notify(this._sharedCmd, 0);
-
-    // انتظر الرد (max 30 ثانية)
-    const waited = Atomics.wait(this._sharedResult, 0, 0, 30000);
-    if (waited === 'timed-out') throw new Error(`PgSyncClient: query timeout — ${sql.substring(0, 80)}`);
-
-    const msg = receiveMessageOnPort(this._port);
-    if (!msg) throw new Error('PgSyncClient: no response message');
-
-    const { type, rows, rowCount, message, code } = msg.message;
-    if (type === 'error') {
-      const err = new Error(message);
-      err.code = code;
-      throw err;
-    }
-
-    return { rows: rows || [], rowCount: rowCount || 0 };
+    return runSync(() => this._client.query(sql, params || []));
   }
 
   end() {
-    try {
-      this._port.postMessage({ type: 'close' });
-      Atomics.store(this._sharedCmd, 0, 1);
-      Atomics.notify(this._sharedCmd, 0);
-      setTimeout(() => this._worker.terminate(), 500);
-    } catch (_) {}
+    try { runSync(() => this._client.end()); } catch (_) {}
   }
 }
 
 // ─── Module-level singleton ───────────────────────────────────────────────────
-// PgSyncClient واحد فقط لكل process — يُعاد الاتصال تلقائياً عند الفشل
 
 let _sharedClient = null;
 let _lastConnStr  = null;
-let _connecting   = false; // منع التزامن
 
-/**
- * يُعيد الـ singleton، وينشئه إذا لم يكن موجوداً.
- * إذا فشل الاتصال السابق (_sharedClient === null) يُعيد المحاولة.
- * عند فشل كل المحاولات يرمي الخطأ — المُستدعي يُقرر ماذا يفعل.
- */
 function getSharedClient(connectionString, ssl) {
   if (_sharedClient && _lastConnStr === connectionString) {
     return _sharedClient;
   }
 
-  // إذا كان هناك اتصال جارٍ في نفس الـ process، انتظر
-  if (_connecting) {
-    const wait = Date.now() + 35000;
-    while (_connecting && Date.now() < wait) {
-      const p = Date.now() + 100;
-      while (Date.now() < p) { /* busy-wait */ }
-    }
-    if (_sharedClient) return _sharedClient;
-  }
-
-  _connecting = true;
   const MAX_RETRIES = 3;
   let lastErr;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       console.log(`[pgCompat] Connecting to PostgreSQL… attempt ${attempt}/${MAX_RETRIES}`);
-      const client = new PgSyncClient(connectionString, ssl);
-      _sharedClient = client;
+      _sharedClient = new PgSyncClient(connectionString, ssl);
       _lastConnStr  = connectionString;
-      _connecting   = false;
-      console.log('[pgCompat] Connected ✓');
       return _sharedClient;
     } catch (err) {
       lastErr = err;
-      console.error(`[pgCompat] Connection attempt ${attempt} failed: ${err.message}`);
+      console.error(`[pgCompat] Attempt ${attempt} failed: ${err.message}`);
       if (attempt < MAX_RETRIES) {
-        const pause = Date.now() + 3000;
-        while (Date.now() < pause) { /* wait 3s */ }
+        // انتظر 3 ثوانٍ قبل إعادة المحاولة
+        let waited = false;
+        setTimeout(() => { waited = true; }, 3000);
+        deasync.loopWhile(() => !waited);
       }
     }
   }
 
-  _connecting = false;
   throw lastErr;
 }
 
@@ -242,8 +135,10 @@ class PgStatement {
 
   _execute(params) {
     try {
-      return this._client.query(this._sql, params);
+      const result = this._client.query(this._sql, params);
+      return { rows: result.rows || [], rowCount: result.rowCount || 0 };
     } catch (err) {
+      // INSERT OR IGNORE → duplicate-key no-op
       if (err.code === '23505' && /INSERT\s+INTO/i.test(this._sql)) {
         return { rows: [], rowCount: 0 };
       }
@@ -251,9 +146,9 @@ class PgStatement {
     }
   }
 
-  get(...params) { return this._execute(params).rows[0]; }
-  all(...params) { return this._execute(params).rows; }
-  run(...params) {
+  get(...params)  { return this._execute(params).rows[0]; }
+  all(...params)  { return this._execute(params).rows; }
+  run(...params)  {
     const result   = this._execute(params);
     const returned = result.rows[0] || {};
     return { changes: result.rowCount || 0, lastInsertRowid: returned.id ?? null };
@@ -272,18 +167,22 @@ class PgCompat {
   prepare(sql) {
     const trimmed = String(sql).trim();
 
+    // PRAGMA table_info → information_schema
     if (/^PRAGMA\s+table_info\s*\(/i.test(trimmed)) {
       const match = trimmed.match(/^PRAGMA\s+table_info\s*\(([^)]+)\)/i);
       const table = String(match?.[1] || '').replace(/["'`]/g, '');
       return {
-        all: () => this._client.query(
-          `SELECT ordinal_position AS cid, column_name AS name, data_type AS type,
-                  (is_nullable = 'NO')::int AS notnull
-           FROM information_schema.columns
-           WHERE table_schema = current_schema() AND table_name = $1
-           ORDER BY ordinal_position`,
-          [table]
-        ).rows,
+        all: () => {
+          const result = this._client.query(
+            `SELECT ordinal_position AS cid, column_name AS name, data_type AS type,
+                    (is_nullable = 'NO')::int AS notnull
+             FROM information_schema.columns
+             WHERE table_schema = current_schema() AND table_name = $1
+             ORDER BY ordinal_position`,
+            [table]
+          );
+          return result.rows || [];
+        },
       };
     }
 
@@ -316,7 +215,7 @@ class PgCompat {
     };
   }
 
-  // لا تُغلق الـ shared client — البوت لا يزال يعمل
+  // لا تُغلق الـ shared client
   close() {}
 }
 
