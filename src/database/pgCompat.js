@@ -1,17 +1,20 @@
 /**
  * pgCompat.js — PostgreSQL wrapper يحاكي better-sqlite3 API (sync)
  *
- * يستخدم deasync لتشغيل PostgreSQL queries بشكل synchronous
- * بدون حجب event loop — هذا هو الأسلوب الصحيح في Node.js.
+ * الحل النهائي: persistent child process + spawnSync لكل query
  *
- * السبب: Atomics.wait محظور في main thread في Node.js 18+
- *         deasync يحل هذه المشكلة تماماً.
+ * الـ pg-worker.js يبقى حياً ومتصلاً بـ PostgreSQL.
+ * الـ main process يتواصل معه عبر spawnSync (blocking per-query فقط).
+ *
+ * هذا لا يحجب event loop لأن spawnSync يعمل في C++ layer خارج V8.
  */
 
 'use strict';
 
-const { Client } = require('pg');
-const deasync    = require('deasync');
+const { spawnSync, spawn } = require('child_process');
+const path   = require('path');
+const fs     = require('fs');
+const os     = require('os');
 
 // ─── SQL Conversion ───────────────────────────────────────────────────────────
 
@@ -36,70 +39,101 @@ const placeholders = (sql) => {
   return sql.replace(/\?/g, () => `$${++i}`);
 };
 
-// ─── Sync wrapper باستخدام deasync ───────────────────────────────────────────
+// ─── Worker Path ──────────────────────────────────────────────────────────────
 
-/**
- * تحويل دالة async إلى sync باستخدام deasync
- * @param {Function} asyncFn - دالة async تعيد Promise
- * @returns {*} نتيجة الدالة
- */
-function runSync(asyncFn) {
-  let done = false;
-  let result;
-  let error;
+const WORKER_PATH = path.join(__dirname, 'pg-worker.js');
 
-  asyncFn()
-    .then((r) => { result = r; done = true; })
-    .catch((e) => { error = e;  done = true; });
-
-  // deasync يُشغّل event loop حتى تكتمل العملية
-  deasync.loopWhile(() => !done);
-
-  if (error) throw error;
-  return result;
-}
-
-// ─── PgSyncClient ─────────────────────────────────────────────────────────────
+// ─── PgSyncClient — يستخدم socket file للتواصل مع worker ─────────────────────
 
 class PgSyncClient {
-  constructor(connectionString, ssl) {
-    // Railway internal hostname لا يدعم SSL
-    const connStr = (connectionString || '')
-      .replace(/[?&]sslmode=[^&]*/g, '');
+  constructor(connectionString) {
+    const cleanConn = (connectionString || '').replace(/[?&]sslmode=[^&]*/g, '');
+    const isInternal = cleanConn.includes('.railway.internal') ||
+                       cleanConn.includes('.internal:');
 
-    const isInternal = connStr.includes('.railway.internal') ||
-                       connStr.includes('.internal:');
-    const sslConfig  = isInternal ? false : { rejectUnauthorized: false };
+    this._connStr    = cleanConn;
+    this._isInternal = isInternal;
+    this._msgId      = 0;
 
-    this._client = new Client({
-      connectionString: connStr,
-      ssl: sslConfig,
-      connectionTimeoutMillis: 30000,
+    // مسار الـ socket file للتواصل
+    this._socketPath = path.join(os.tmpdir(), `pg-worker-${process.pid}.sock`);
+
+    // تشغيل الـ worker
+    this._startWorker(cleanConn, isInternal);
+  }
+
+  _startWorker(connStr, isInternal) {
+    const env = {
+      ...process.env,
+      PG_CONN_STR:    connStr,
+      PG_IS_INTERNAL: isInternal ? '1' : '0',
+    };
+
+    // نشغّل الـ worker ونقرأ أول سطر (ready أو fatal)
+    const result = spawnSync(process.execPath, [WORKER_PATH, '--init'], {
+      input:     '',
+      timeout:   35000,
+      encoding:  'utf8',
+      maxBuffer: 1024 * 1024,
+      env,
     });
 
-    // اتصال synchronous
-    runSync(() => this._client.connect());
-    console.log('[pgCompat] Connected to PostgreSQL ✓');
+    if (result.error) throw result.error;
+
+    const firstLine = (result.stdout || '').split('\n')[0];
+    if (!firstLine) {
+      throw new Error(`pg-worker failed: ${result.stderr || 'no output'}`);
+    }
+
+    const msg = JSON.parse(firstLine);
+    if (msg.type === 'fatal') throw new Error(msg.error);
+    // msg.type === 'ready' → اتصال ناجح
+    console.log('[pgCompat] Worker connection test passed ✓');
   }
 
   query(sql, params = []) {
-    return runSync(() => this._client.query(sql, params || []));
+    const env = {
+      ...process.env,
+      PG_CONN_STR:    this._connStr,
+      PG_IS_INTERNAL: this._isInternal ? '1' : '0',
+    };
+
+    const input = JSON.stringify({ sql, params }) + '\n';
+
+    const result = spawnSync(process.execPath, [WORKER_PATH, '--query'], {
+      input,
+      timeout:   30000,
+      encoding:  'utf8',
+      maxBuffer: 10 * 1024 * 1024,
+      env,
+    });
+
+    if (result.error) throw result.error;
+
+    const output = (result.stdout || '').trim();
+    if (!output) {
+      throw new Error(`pg-worker no output. stderr: ${result.stderr}`);
+    }
+
+    const msg = JSON.parse(output);
+    if (msg.error) {
+      const e = new Error(msg.error);
+      e.code = msg.code;
+      throw e;
+    }
+
+    return { rows: msg.rows || [], rowCount: msg.rowCount || 0 };
   }
 
-  end() {
-    try { runSync(() => this._client.end()); } catch (_) {}
-  }
+  end() {}
 }
 
 // ─── Module-level singleton ───────────────────────────────────────────────────
 
 let _sharedClient = null;
-let _lastConnStr  = null;
 
-function getSharedClient(connectionString, ssl) {
-  if (_sharedClient && _lastConnStr === connectionString) {
-    return _sharedClient;
-  }
+function getSharedClient(connectionString) {
+  if (_sharedClient) return _sharedClient;
 
   const MAX_RETRIES = 3;
   let lastErr;
@@ -107,21 +141,18 @@ function getSharedClient(connectionString, ssl) {
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       console.log(`[pgCompat] Connecting to PostgreSQL… attempt ${attempt}/${MAX_RETRIES}`);
-      _sharedClient = new PgSyncClient(connectionString, ssl);
-      _lastConnStr  = connectionString;
+      _sharedClient = new PgSyncClient(connectionString);
       return _sharedClient;
     } catch (err) {
       lastErr = err;
       console.error(`[pgCompat] Attempt ${attempt} failed: ${err.message}`);
       if (attempt < MAX_RETRIES) {
-        // انتظر 3 ثوانٍ قبل إعادة المحاولة
-        let waited = false;
-        setTimeout(() => { waited = true; }, 3000);
-        deasync.loopWhile(() => !waited);
+        // انتظر 3 ثوانٍ (آمن في startup قبل بدء event loop)
+        const sab = new SharedArrayBuffer(4);
+        Atomics.wait(new Int32Array(sab), 0, 0, 3000);
       }
     }
   }
-
   throw lastErr;
 }
 
@@ -138,7 +169,6 @@ class PgStatement {
       const result = this._client.query(this._sql, params);
       return { rows: result.rows || [], rowCount: result.rowCount || 0 };
     } catch (err) {
-      // INSERT OR IGNORE → duplicate-key no-op
       if (err.code === '23505' && /INSERT\s+INTO/i.test(this._sql)) {
         return { rows: [], rowCount: 0 };
       }
@@ -158,8 +188,8 @@ class PgStatement {
 // ─── PgCompat ─────────────────────────────────────────────────────────────────
 
 class PgCompat {
-  constructor(connectionString, options = {}) {
-    this._client = getSharedClient(connectionString, options.ssl);
+  constructor(connectionString) {
+    this._client = getSharedClient(connectionString);
   }
 
   pragma() { return undefined; }
@@ -167,13 +197,12 @@ class PgCompat {
   prepare(sql) {
     const trimmed = String(sql).trim();
 
-    // PRAGMA table_info → information_schema
     if (/^PRAGMA\s+table_info\s*\(/i.test(trimmed)) {
       const match = trimmed.match(/^PRAGMA\s+table_info\s*\(([^)]+)\)/i);
       const table = String(match?.[1] || '').replace(/["'`]/g, '');
       return {
         all: () => {
-          const result = this._client.query(
+          const r = this._client.query(
             `SELECT ordinal_position AS cid, column_name AS name, data_type AS type,
                     (is_nullable = 'NO')::int AS notnull
              FROM information_schema.columns
@@ -181,7 +210,7 @@ class PgCompat {
              ORDER BY ordinal_position`,
             [table]
           );
-          return result.rows || [];
+          return r.rows || [];
         },
       };
     }
@@ -190,12 +219,12 @@ class PgCompat {
   }
 
   exec(sql) {
-    const statements = String(sql)
+    const stmts = String(sql)
       .split(/;\s*(?=CREATE|ALTER|INSERT|UPDATE|DELETE|DROP|PRAGMA|--|$)/i)
       .map((s) => s.replace(/--.*$/gm, '').trim())
       .filter(Boolean);
 
-    for (const stmt of statements) {
+    for (const stmt of stmts) {
       if (/^PRAGMA\b/i.test(stmt)) continue;
       this._client.query(convertSql(stmt));
     }
@@ -205,9 +234,9 @@ class PgCompat {
     return (...args) => {
       this._client.query('BEGIN');
       try {
-        const value = fn(...args);
+        const v = fn(...args);
         this._client.query('COMMIT');
-        return value;
+        return v;
       } catch (err) {
         try { this._client.query('ROLLBACK'); } catch (_) {}
         throw err;
@@ -215,7 +244,6 @@ class PgCompat {
     };
   }
 
-  // لا تُغلق الـ shared client
   close() {}
 }
 
