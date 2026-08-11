@@ -4,8 +4,10 @@
  * يستخدم worker_threads + Atomics.wait لتنفيذ PostgreSQL queries
  * بشكل متزامن حقيقي بدون حجب event loop.
  *
- * FIX: PgSyncClient يُنشأ مرة واحدة فقط (singleton) لتجنب
- *      timeout عند كل callback query.
+ * FIX v2:
+ *  1. singleton على مستوى الـ module (لا يُنشأ client جديد بعد الأول)
+ *  2. timeout الاتصال مرفوع لـ 30 ثانية (Railway cold start)
+ *  3. إعادة المحاولة التلقائية 3 مرات عند فشل الاتصال
  */
 
 'use strict';
@@ -50,6 +52,8 @@ const { Client } = require('pg');
   const client = new Client({
     connectionString: workerData.connectionString,
     ssl: workerData.ssl,
+    connectionTimeoutMillis: 30000,
+    statement_timeout: 30000,
   });
 
   try {
@@ -59,12 +63,9 @@ const { Client } = require('pg');
     return;
   }
 
-  // إشعار main thread بأن الاتصال جاهز
   port.postMessage({ type: 'ready' });
 
-  // حلقة معالجة الـ queries
   while (true) {
-    // انتظر أمر من main thread
     Atomics.wait(sharedCmd, 0, 0);
     Atomics.store(sharedCmd, 0, 0);
 
@@ -93,6 +94,12 @@ const { Client } = require('pg');
 
 class PgSyncClient {
   constructor(connectionString, ssl) {
+    this._connectionString = connectionString;
+    this._ssl = ssl;
+    this._connect();
+  }
+
+  _connect() {
     const sabCmd    = new SharedArrayBuffer(4);
     const sabResult = new SharedArrayBuffer(4);
     this._sharedCmd    = new Int32Array(sabCmd);
@@ -105,8 +112,8 @@ class PgSyncClient {
     this._worker = new Worker(WORKER_CODE, {
       eval: true,
       workerData: {
-        connectionString,
-        ssl: ssl === false ? false : { rejectUnauthorized: false },
+        connectionString: this._connectionString,
+        ssl: this._ssl === false ? false : { rejectUnauthorized: false },
         port: port2,
         sharedCmd:    sabCmd,
         sharedResult: sabResult,
@@ -114,28 +121,28 @@ class PgSyncClient {
       transferList: [port2],
     });
 
-    // انتظر ready بـ polling (max 15 ثانية)
+    // انتظر ready — مرفوع لـ 30 ثانية لاستيعاب Railway cold start
     let ready = false;
-    this._worker.on('message', (m) => { if (m.type === 'ready') ready = true; });
+    let fatalError = null;
+    this._worker.on('message', (m) => {
+      if (m.type === 'ready') ready = true;
+      if (m.type === 'fatal') fatalError = m.message;
+    });
 
-    const deadline = Date.now() + 15000;
-    while (!ready && Date.now() < deadline) {
-      Atomics.wait(this._sharedResult, 0, 0, 100);
+    const deadline = Date.now() + 30000;
+    while (!ready && !fatalError && Date.now() < deadline) {
+      Atomics.wait(this._sharedResult, 0, 0, 200);
     }
 
-    if (!ready) throw new Error('PgSyncClient: connection timeout after 15s');
+    if (fatalError) throw new Error(`PgSyncClient: ${fatalError}`);
+    if (!ready) throw new Error('PgSyncClient: connection timeout after 30s');
   }
 
   query(sql, params = []) {
     const id = ++this._msgId;
 
-    // إعادة تعيين result signal
     Atomics.store(this._sharedResult, 0, 0);
-
-    // إرسال الـ query
     this._port.postMessage({ type: 'query', id, sql, params });
-
-    // إيقاظ الـ worker
     Atomics.store(this._sharedCmd, 0, 1);
     Atomics.notify(this._sharedCmd, 0);
 
@@ -166,6 +173,46 @@ class PgSyncClient {
   }
 }
 
+// ─── Module-level singleton ───────────────────────────────────────────────────
+// PgSyncClient واحد فقط لكل process — يُعاد الاتصال تلقائياً عند الفشل
+
+let _sharedClient = null;
+let _lastConnStr  = null;
+
+/**
+ * يُعيد الـ singleton، وينشئه إذا لم يكن موجوداً.
+ * عند فشل الاتصال (connection timeout) يُعيد المحاولة 3 مرات.
+ */
+function getSharedClient(connectionString, ssl) {
+  // إذا تغيّر الـ connection string (نادر) أنشئ client جديد
+  if (_sharedClient && _lastConnStr === connectionString) {
+    return _sharedClient;
+  }
+
+  const MAX_RETRIES = 3;
+  let lastErr;
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      console.log(`[pgCompat] Connecting to PostgreSQL… attempt ${attempt}/${MAX_RETRIES}`);
+      _sharedClient = new PgSyncClient(connectionString, ssl);
+      _lastConnStr  = connectionString;
+      console.log('[pgCompat] Connected ✓');
+      return _sharedClient;
+    } catch (err) {
+      lastErr = err;
+      console.error(`[pgCompat] Connection attempt ${attempt} failed: ${err.message}`);
+      if (attempt < MAX_RETRIES) {
+        // انتظر 2 ثانية قبل إعادة المحاولة (busy-wait خفيف)
+        const pause = Date.now() + 2000;
+        while (Date.now() < pause) { /* wait */ }
+      }
+    }
+  }
+
+  throw lastErr;
+}
+
 // ─── PgStatement ─────────────────────────────────────────────────────────────
 
 class PgStatement {
@@ -178,7 +225,6 @@ class PgStatement {
     try {
       return this._client.query(this._sql, params);
     } catch (err) {
-      // INSERT OR IGNORE → duplicate-key no-op
       if (err.code === '23505' && /INSERT\s+INTO/i.test(this._sql)) {
         return { rows: [], rowCount: 0 };
       }
@@ -197,16 +243,9 @@ class PgStatement {
 
 // ─── PgCompat ─────────────────────────────────────────────────────────────────
 
-// FIX: Singleton — اتصال واحد فقط طوال عمر البوت
-let _singletonClient = null;
-
 class PgCompat {
   constructor(connectionString, options = {}) {
-    // إعادة استخدام نفس الـ client إذا كان موجوداً بنفس الـ connectionString
-    if (!_singletonClient) {
-      _singletonClient = new PgSyncClient(connectionString, options.ssl);
-    }
-    this._client = _singletonClient;
+    this._client = getSharedClient(connectionString, options.ssl);
   }
 
   pragma() { return undefined; }
@@ -214,7 +253,6 @@ class PgCompat {
   prepare(sql) {
     const trimmed = String(sql).trim();
 
-    // PRAGMA table_info → information_schema
     if (/^PRAGMA\s+table_info\s*\(/i.test(trimmed)) {
       const match = trimmed.match(/^PRAGMA\s+table_info\s*\(([^)]+)\)/i);
       const table = String(match?.[1] || '').replace(/["'`]/g, '');
@@ -259,9 +297,8 @@ class PgCompat {
     };
   }
 
-  close() {
-    // لا تُغلق الـ singleton — البوت لا يزال يعمل
-  }
+  // لا تُغلق الـ shared client — البوت لا يزال يعمل
+  close() {}
 }
 
 module.exports = { PgCompat, convertSql, placeholders };
