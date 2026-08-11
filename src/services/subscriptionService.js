@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const { getDb } = require('../database/db');
+const { isAdmin } = require('../utils/adminAccess');
 
 const DEFAULT_MAX_ACCOUNTS = 2147483647;
 
@@ -40,6 +41,13 @@ const getAccountCount = (userId) => Number(getDb().prepare('SELECT COUNT(*) AS c
 const getAccess = (userId) => {
   const subscription = getSubscription(userId);
   const used = getAccountCount(userId);
+
+  // The configured owner/admin is not a subscription customer and must always
+  // be able to manage and add accounts, even without an active subscription.
+  if (isAdmin(userId)) {
+    return { allowed: true, reason: 'admin', subscription, used, remaining: null };
+  }
+
   if (!subscription || subscription.status !== 'active') {
     return { allowed: false, reason: 'no_subscription', subscription: null, used, remaining: 0 };
   }

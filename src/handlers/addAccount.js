@@ -40,8 +40,8 @@ const MAX_OTP_ATTEMPTS = 3;
 const handleAddAccountStart = async (ctx) => {
   try {
     const userId = String(ctx.from.id);
-    const subscription = subscriptionService.getSubscription(userId);
-    if (!subscription || subscription.status !== 'active') {
+    const access = subscriptionService.getAccess(userId);
+    if (!access.allowed) {
       await ctx.reply('🚫 لا يوجد اشتراك فعال يسمح بإضافة الحسابات. يرجى تفعيل كود اشتراك صالح أولاً.', require('../handlers/subscription').subscriptionKeyboard(false));
       return;
     }
@@ -63,8 +63,8 @@ const handleAddAccountStart = async (ctx) => {
  */
 const handlePhoneInput = async (ctx) => {
   const userId = String(ctx.from.id);
-  const subscription = subscriptionService.getSubscription(userId);
-  if (!subscription || subscription.status !== 'active') {
+  const access = subscriptionService.getAccess(userId);
+  if (!access.allowed) {
     await ctx.reply('🚫 انتهى اشتراكك أو لا يوجد اشتراك فعال. فعّل كوداً جديداً للمتابعة.');
     sessionState.resetState(userId);
     return;

@@ -2,8 +2,7 @@ const sessionState = require('../services/sessionState');
 const subscriptionService = require('../services/subscriptionService');
 const { Markup } = require('telegraf');
 
-const adminIds = new Set(String(process.env.ADMIN_IDS || '').split(',').map((id) => id.trim()).filter(Boolean));
-const isAdmin = (userId) => adminIds.has(String(userId));
+const { isAdmin } = require('../utils/adminAccess');
 const backKeyboard = () => Markup.inlineKeyboard([[Markup.button.callback('⬅️ القائمة الرئيسية', 'main_menu')]]);
 const subscriptionKeyboard = (admin = false) => Markup.inlineKeyboard([
   [Markup.button.callback('🎟 تفعيل كود الاشتراك', 'subscription_activate')],
