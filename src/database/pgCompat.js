@@ -3,6 +3,9 @@
  *
  * يستخدم worker_threads + Atomics.wait لتنفيذ PostgreSQL queries
  * بشكل متزامن حقيقي بدون حجب event loop.
+ *
+ * FIX: PgSyncClient يُنشأ مرة واحدة فقط (singleton) لتجنب
+ *      timeout عند كل callback query.
  */
 
 'use strict';
@@ -194,9 +197,16 @@ class PgStatement {
 
 // ─── PgCompat ─────────────────────────────────────────────────────────────────
 
+// FIX: Singleton — اتصال واحد فقط طوال عمر البوت
+let _singletonClient = null;
+
 class PgCompat {
   constructor(connectionString, options = {}) {
-    this._client = new PgSyncClient(connectionString, options.ssl);
+    // إعادة استخدام نفس الـ client إذا كان موجوداً بنفس الـ connectionString
+    if (!_singletonClient) {
+      _singletonClient = new PgSyncClient(connectionString, options.ssl);
+    }
+    this._client = _singletonClient;
   }
 
   pragma() { return undefined; }
@@ -249,7 +259,9 @@ class PgCompat {
     };
   }
 
-  close() { this._client.end(); }
+  close() {
+    // لا تُغلق الـ singleton — البوت لا يزال يعمل
+  }
 }
 
 module.exports = { PgCompat, convertSql, placeholders };
